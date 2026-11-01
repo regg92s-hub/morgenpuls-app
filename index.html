@@ -647,12 +647,13 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     g.innerHTML = `<div class="in"><h1>Data</h1>
       <p>Siste store kopi i repoet: <b>${esc(fmt(BUNDLE.generated_at))}</b>. Endringer du gjør lagres med en gang, hver for seg.</p>
       <p class="muted" style="font-size:13px">${Q.length ? esc(Q.length + " endring(er) venter på å bli lagret. De ligger trygt på enheten til nettet er tilbake.") : "Alt er lagret."}${lastErr ? " Siste feil: " + esc(lastErr) : ""}</p>
-      <div class="row"><button class="btn primary" id="mpref" type="button">Hent på nytt</button>${Q.length ? '<button class="btn" id="mpq" type="button">Prøv å lagre nå</button>' : ""}<button class="btn" id="mpx" type="button">Lukk</button></div>
-      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%"><p><b>Fjern nøkkelen fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alt som er lagret lokalt. Repoet påvirkes ikke. Endringer som ikke er lagret ennå, går tapt.</span></p>
+      <div class="row"><button class="btn primary" id="mpref" type="button">Hent på nytt</button>${Q.length ? '<button class="btn" id="mpq" type="button">Prøv å lagre nå</button>' : ""}<button class="btn" id="mpny" type="button">Bytt nøkkel</button><button class="btn" id="mpx" type="button">Lukk</button></div>
+      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%"><p><b>Fjern alt fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alt som er lagret lokalt, og henter alt på nytt neste gang. Repoet påvirkes ikke. Endringer som ikke er lagret ennå, går tapt. Skal du bare bytte nøkkel, bruk «Bytt nøkkel» over.</span></p>
       <div class="row"><button class="btn" id="mpdel" type="button" style="color:var(--accent,#d7262e)">Fjern nøkkel og data</button></div></div>`;
     document.body.appendChild(g);
     g.querySelector("#mpx").onclick = () => g.remove();
     g.querySelector("#mpref").onclick = async () => { g.remove(); await refresh(); };
+    g.querySelector("#mpny").onclick = async () => { g.remove(); await KV.del("token").catch(() => {}); token = await gate("Lim inn den nye nøkkelen. Alt du har lagret lokalt beholdes."); postAssets(); await refresh(); };
     const qb = g.querySelector("#mpq"); if (qb) qb.onclick = async () => { g.remove(); await pump(); };
     g.querySelector("#mpdel").onclick = async () => { for (const k of ["token", "bundle", "ov", "meta", "queue"]) await KV.del(k).catch(() => {}); try { await caches.delete("mp-assets"); } catch {} location.reload(); };
   }
