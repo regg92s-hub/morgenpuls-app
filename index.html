@@ -388,9 +388,8 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 .progress i{display:block;height:100%;background:var(--accent)}
 @media (prefers-reduced-motion:no-preference){.card,.study,.news{animation:in .25s ease-out both}@keyframes in{from{transform:translateY(4px)}to{transform:none}}}
 </style>
-<style>/* skrivebeskyttet app: skjul knapper som lager eller endrer innhold */
-#ncap,#ncap2,#nimport,#nnew,#nsub,#nday,#naddblock,#ndel,#nmove,#npin,#ncards,#newrec,#nsave{display:none!important}
-[contenteditable]{-webkit-user-modify:read-only}</style>
+<style>/* appen skriver til repoet, men har ingen Claude: skjul bare det som krever AI */
+#ncap,#ncap2,#nimport,#ncards{display:none!important}</style>
 </head>
 <body>
 
@@ -418,108 +417,253 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 <div id="toast" class="toast" hidden></div>
 
 <script>
-/* Morgenpuls som egen app: leser data fra det private GitHub-repoet med en personlig nøkkel (kun lesing).
-   Nøkkelen lagres bare på denne enheten (IndexedDB). Ingen data ligger i dette offentlige repoet. */
+/* Morgenpuls som egen app. Leser og skriver data direkte i det private GitHub-repoet med en personlig
+   nøkkel som bare ligger på denne enheten (IndexedDB). Repoet er fasiten. Claude-kjøringene skriver
+   samme sted, så appen virker selv om ingen kjøring går. Ingen data ligger i dette offentlige repoet. */
 (() => {
-  const OWNER = "regg92s-hub", REPO = "morgenpuls", API = "https://api.github.com";
+  const OWNER = "regg92s-hub", REPO = "morgenpuls", BRANCH = "main", API = "https://api.github.com";
+  const R = `/repos/${OWNER}/${REPO}`, FILE = p => "data/" + p + ".json";
+
   const KV = (() => { let dbp; const open = () => dbp || (dbp = new Promise((res, rej) => { const r = indexedDB.open("mp-app", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }));
     const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction("kv", mode); const q = fn(t.objectStore("kv")); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); };
     return { get: k => tx("readonly", s => s.get(k)), set: (k, v) => tx("readwrite", s => s.put(v, k)), del: k => tx("readwrite", s => s.delete(k)) }; })();
-  const gh = (path, token, extra = {}) => fetch(API + path, { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28", ...extra }, cache: "no-store" });
 
-  // ---------- skrivebeskyttet database med samme grensesnitt som i Claude ----------
-  let DATA = null; const listeners = new Set();
-  const ro = () => Promise.reject({ code: "read_only" });
+  let token = null;
+  const gh = (path, opt = {}) => fetch(API + path, { ...opt, headers: { Authorization: "Bearer " + token, Accept: opt.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(opt.headers || {}) }, cache: "no-store" });
+  const b64 = s => { const u = new TextEncoder().encode(s); let bin = ""; const C = 0x8000; for (let i = 0; i < u.length; i += C) bin += String.fromCharCode.apply(null, u.subarray(i, i + C)); return btoa(bin); };
   const clone = v => v == null ? v : JSON.parse(JSON.stringify(v));
+  const now = () => new Date().toISOString();
+
+  /* ---------- lokal tilstand ---------- */
+  // BUNDLE: bulk-kopien fra repoet. OV: dokumenter som er nyere enn bundelen (egne og andres skrivinger).
+  let BUNDLE = { generated_at: null, collections: {}, assets: {} };
+  let OV = Object.create(null);         // "samling/id" -> {d: data|null, t: iso, sha: string|null}
+  let META = { head: null };
+  let Q = [];                            // skrivekø som overlever omstart
+  let saving = false, lastErr = null;
+  const listeners = new Set();
+  const notify = () => listeners.forEach(l => { try { l(); } catch {} });
+  const save = () => { KV.set("ov", OV).catch(() => {}); KV.set("meta", META).catch(() => {}); KV.set("queue", Q).catch(() => {}); };
+
+  const split = path => { const p = String(path).split("/"); return [p.slice(0, -1).join("/"), p[p.length - 1]]; };
+  function docVal(path) {                // undefined = finnes ikke
+    const o = OV[path]; if (o) return o.d === null ? undefined : o.d;
+    const [c, id] = split(path); return BUNDLE.collections?.[c]?.[id];
+  }
+  function collEntries(coll) {
+    const out = new Map();
+    const base = BUNDLE.collections?.[coll] || {};
+    for (const [id, v] of Object.entries(base)) out.set(id, v);
+    for (const [p, o] of Object.entries(OV)) { const [c, id] = split(p); if (c !== coll) continue; if (o.d === null) out.delete(id); else out.set(id, o.d); }
+    return [...out].map(([id, v]) => ({ id, v }));
+  }
+  function putOv(path, data, sha) { OV[path] = { d: data === undefined ? null : data, t: now(), sha: sha ?? OV[path]?.sha ?? null }; }
+
+  /* ---------- samme grensesnitt som databasen i Claude ---------- */
   const docSnap = (id, v) => ({ id, exists: v !== undefined, data: () => clone(v) });
-  function split(path) { const p = path.split("/"); return [p.slice(0, -1).join("/"), p[p.length - 1]]; }
   function runQuery(q) {
-    const col = DATA?.collections?.[q.coll] || {};
-    let docs = Object.entries(col).map(([id, v]) => ({ id, v }));
+    let docs = collEntries(q.coll);
+    for (const w of q.wheres || []) docs = docs.filter(d => { const x = d.v?.[w[0]]; return w[1] === "==" ? x === w[2] : w[1] === "!=" ? x !== w[2] : w[1] === ">=" ? x >= w[2] : w[1] === "<=" ? x <= w[2] : w[1] === ">" ? x > w[2] : w[1] === "<" ? x < w[2] : true; });
     if (q.order) { const [f, dir] = q.order; docs.sort((a, b) => { const x = a.v?.[f], y = b.v?.[f]; const c = x == null ? -1 : y == null ? 1 : x < y ? -1 : x > y ? 1 : 0; return dir === "desc" ? -c : c; }); }
     if (q.lim) docs = docs.slice(0, q.lim);
     const ds = docs.map(d => docSnap(d.id, d.v)); return { docs: ds, empty: !ds.length, size: ds.length, forEach: f => ds.forEach(f) };
   }
   function query(q) {
-    return { orderBy: (f, dir = "asc") => query({ ...q, order: [f, dir] }), limit: n => query({ ...q, lim: n }), where: () => query(q),
+    return { orderBy: (f, dir = "asc") => query({ ...q, order: [f, dir] }), limit: n => query({ ...q, lim: n }),
+      where: (f, op, v) => query({ ...q, wheres: [...(q.wheres || []), [f, op, v]] }),
       get: async () => runQuery(q),
-      onSnapshot(cb, err) { const l = () => { try { cb(runQuery(q)); } catch (e) { err && err(e); } }; listeners.add(l); if (DATA) queueMicrotask(l); return () => listeners.delete(l); },
-      doc: id => docRef(q.coll + "/" + id), add: ro };
+      onSnapshot(cb, err) { const l = () => { try { cb(runQuery(q)); } catch (e) { err && err(e); } }; listeners.add(l); if (BUNDLE.generated_at || Object.keys(OV).length) queueMicrotask(l); return () => listeners.delete(l); },
+      doc: id => docRef(q.coll + "/" + id),
+      add: async data => { const id = "a" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); await write(q.coll + "/" + id, "set", data); return docRef(q.coll + "/" + id); } };
   }
   function docRef(path) {
-    const [c, id] = split(path); const val = () => DATA?.collections?.[c]?.[id];
-    return { id, get: async () => docSnap(id, val()), set: ro, update: ro, delete: ro,
-      onSnapshot(cb, err) { const l = () => { try { cb(docSnap(id, val())); } catch (e) { err && err(e); } }; listeners.add(l); if (DATA) queueMicrotask(l); return () => listeners.delete(l); } };
+    const [, id] = split(path);
+    return { id, path,
+      get: async () => docSnap(id, docVal(path)),
+      set: d => write(path, "set", d), update: d => write(path, "update", d), delete: () => write(path, "delete"),
+      onSnapshot(cb, err) { const l = () => { try { cb(docSnap(id, docVal(path))); } catch (e) { err && err(e); } }; listeners.add(l); if (BUNDLE.generated_at || Object.keys(OV).length) queueMicrotask(l); return () => listeners.delete(l); } };
   }
-  const db = { collection: name => query({ coll: name }), doc: docRef, batch: () => ({ set() {}, update() {}, delete() {}, commit: ro }) };
+  const db = { collection: name => query({ coll: name }), doc: docRef,
+    batch: () => { const ops = []; return { set: (r, d) => ops.push([r.path, "set", d]), update: (r, d) => ops.push([r.path, "update", d]), delete: r => ops.push([r.path, "delete"]),
+      commit: async () => { for (const o of ops) await write(o[0], o[1], o[2]); } }; } };
+
   let ready; const dbReady = new Promise(r => ready = r);
   window.claude = { use: async name => name === "db" ? (await dbReady, db) : null };
 
-  // ---------- statuslinje og innstillinger ----------
+  /* ---------- skriving ---------- */
+  async function write(path, op, data) {
+    if (!/^[a-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(path)) throw { code: "bad_path", message: "Ugyldig sti: " + path };
+    const cur = docVal(path);
+    let next;
+    if (op === "delete") next = undefined;
+    else if (op === "update") { if (cur === undefined) throw { code: "not_found", message: "Dokumentet finnes ikke" }; next = { ...cur, ...clone(data) }; }
+    else next = clone(data);
+    putOv(path, next);                                   // vis endringen med en gang
+    Q = Q.filter(x => x.path !== path).concat([{ path, op: op === "delete" ? "delete" : "set", data: next === undefined ? null : next, t: now() }]);
+    save(); notify(); bar();
+    await pump();                                        // feiler det, blir det liggende i køen
+    if (lastErr && Q.some(x => x.path === path)) throw { code: "sync", message: lastErr };
+  }
+
+  async function shaOf(path) {
+    if (OV[path]?.sha) return OV[path].sha;
+    const r = await gh(`${R}/contents/${encodeURI(FILE(path))}?ref=${BRANCH}`);
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json(); if (OV[path]) OV[path].sha = j.sha; return j.sha;
+  }
+
+  async function pushOne(item) {
+    const { path, op } = item;
+    let sha = await shaOf(path);
+    const body = op === "delete"
+      ? { message: `App: slett ${path}`, sha, branch: BRANCH }
+      : { message: `App: ${sha ? "oppdater" : "ny"} ${path}`, content: b64(JSON.stringify(item.data, null, 1) + "\n"), sha: sha || undefined, branch: BRANCH };
+    if (op === "delete" && !sha) return true;            // alt borte fra før
+    let r = await gh(`${R}/contents/${encodeURI(FILE(path))}`, { method: op === "delete" ? "DELETE" : "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+    if (r.status === 409 || r.status === 422) {          // noen andre skrev imens: hent fersk sha og prøv én gang til
+      if (OV[path]) OV[path].sha = null;
+      sha = await shaOf(path);
+      body.sha = sha || undefined; if (op === "delete" && !sha) return true;
+      r = await gh(`${R}/contents/${encodeURI(FILE(path))}`, { method: op === "delete" ? "DELETE" : "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+    }
+    if (r.status === 401) throw Object.assign(new Error("Nøkkelen ble ikke godtatt"), { auth: true });
+    if (r.status === 403) throw Object.assign(new Error("Nøkkelen mangler skrivetilgang til repoet"), { auth: true });
+    if (!r.ok) throw new Error("GitHub svarte " + r.status);
+    const j = await r.json().catch(() => ({}));
+    if (OV[path]) OV[path].sha = j.content?.sha || null;
+    if (j.commit?.sha) META.head = j.commit.sha;
+    return true;
+  }
+
+  async function pump() {
+    if (saving) return; saving = true; bar();
+    try {
+      while (Q.length) {
+        const item = Q[0];
+        try { await pushOne(item); Q.shift(); lastErr = null; save(); }
+        catch (e) {
+          lastErr = e.message || "Fikk ikke lagret";
+          if (e.auth) { await KV.del("token"); token = await gate(lastErr + ". Lag en ny nøkkel med skrivetilgang."); lastErr = null; continue; }
+          break;                                          // nett eller GitHub nede: prøv igjen senere
+        }
+      }
+    } finally { saving = false; bar(); }
+  }
+
+  /* ---------- lesing og synk ---------- */
+  async function loadBundle() {
+    const r = await gh(`${R}/contents/bundle/data.json?ref=${BRANCH}`, { raw: true });
+    if (r.status === 404) return false;
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    BUNDLE = { generated_at: d.generated_at || null, collections: d.collections || {}, assets: d.assets || {} };
+    await KV.set("bundle", BUNDLE);
+    const cut = BUNDLE.generated_at || "";
+    for (const [p, o] of Object.entries(OV)) if (o.t < cut && !Q.some(x => x.path === p)) delete OV[p];   // bundelen har tatt den igjen
+    return true;
+  }
+  async function applyFiles(files) {
+    for (const f of files) {
+      const m = /^data\/([a-z0-9-]+)\/([^/]+)\.json$/.exec(f.filename || "");
+      if (!m) continue;
+      const path = m[1] + "/" + m[2];
+      if (Q.some(x => x.path === path)) continue;         // vår egen endring venter, ikke overskriv den
+      if (f.status === "removed") { OV[path] = { d: null, t: now(), sha: null }; continue; }
+      const r = await gh(`${R}/contents/${encodeURI(FILE(path))}?ref=${BRANCH}`, { raw: true });
+      if (!r.ok) continue;
+      try { OV[path] = { d: await r.json(), t: now(), sha: f.sha || null }; } catch {}
+    }
+  }
+  async function pull() {
+    const hr = await gh(`${R}/commits/${BRANCH}`);
+    if (hr.status === 401 || hr.status === 403) { await KV.del("token"); token = await gate(hr.status === 401 ? "Nøkkelen er utløpt eller trukket tilbake." : "Nøkkelen har ikke tilgang til repoet."); return pull(); }
+    if (!hr.ok) throw new Error("HTTP " + hr.status);
+    const head = (await hr.json()).sha;
+    if (head === META.head && BUNDLE.generated_at) return;
+    let done = false;
+    if (META.head && BUNDLE.generated_at) {
+      const cr = await gh(`${R}/compare/${META.head}...${head}`);
+      if (cr.ok) { const c = await cr.json();
+        if (!c.files || c.files.length <= 300) {
+          if ((c.files || []).some(f => f.filename === "bundle/data.json")) await loadBundle();
+          await applyFiles(c.files || []); done = true;
+        } }
+    }
+    if (!done) await loadBundle();
+    META.head = head; save(); notify(); postAssets();
+  }
+
+  /* ---------- statuslinje og innstillinger ---------- */
   const css = `.mpbar{position:fixed;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;gap:6px;align-items:center;font:12px/1.2 var(--f-mono,monospace);background:var(--surface,#fff);color:var(--muted,#666);border:1px solid var(--line,#ddd);border-radius:999px;padding:6px 10px;box-shadow:0 2px 10px rgba(0,0,0,.08);cursor:pointer}
-.mpbar i{width:7px;height:7px;border-radius:50%;background:var(--ok,#1f8a4c)}.mpbar.old i{background:var(--warn,#b26a00)}.mpbar.err i{background:var(--accent,#d7262e)}
+.mpbar i{width:7px;height:7px;border-radius:50%;background:var(--ok,#1f8a4c)}.mpbar.old i{background:var(--warn,#b26a00)}.mpbar.err i{background:var(--accent,#d7262e)}.mpbar.busy i{background:var(--warn,#b26a00);animation:mppulse 1s infinite}
+@keyframes mppulse{50%{opacity:.3}}
 .mpgate{position:fixed;inset:0;z-index:60;background:var(--bg,#f3f2f0);color:var(--fg,#111);overflow:auto;padding:max(24px,env(safe-area-inset-top)) 16px 32px}
 .mpgate .in{max-width:520px;margin:0 auto;display:grid;gap:14px}.mpgate h1{font:800 26px/1.15 var(--f-display,sans-serif);margin:8px 0 0}
 .mpgate ol{margin:0;padding-left:20px;display:grid;gap:6px}.mpgate input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line,#ccc);background:var(--surface,#fff);font:14px var(--f-mono,monospace)}
 .mpgate .row{display:flex;gap:8px;flex-wrap:wrap}.mpgate .e{color:var(--accent,#d7262e);font-weight:600;min-height:1.2em}.mpgate code{font-size:13px}`;
   const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const fmt = iso => { if (!iso) return "–"; const d = new Date(iso); return d.toLocaleString("nb-NO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
-  let bar; function setBar(cls, txt) { if (!bar) { bar = document.createElement("button"); bar.className = "mpbar"; bar.type = "button"; bar.onclick = settings; document.body.appendChild(bar); } bar.className = "mpbar " + (cls || ""); bar.innerHTML = `<i></i><span>${esc(txt)}</span>`; }
+  const fmt = iso => { if (!iso) return "–"; const d = new Date(iso); return isNaN(d) ? "–" : d.toLocaleString("nb-NO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
+  const old = () => BUNDLE.generated_at && Date.now() - new Date(BUNDLE.generated_at) > 36 * 3600e3;
+  let el;
+  function bar() {
+    if (!el) { el = document.createElement("button"); el.className = "mpbar"; el.type = "button"; el.onclick = settings; document.body.appendChild(el); }
+    let cls = old() ? "old" : "", txt = "Data " + fmt(BUNDLE.generated_at);
+    if (Q.length && saving) { cls = "busy"; txt = "Lagrer" + (Q.length > 1 ? " " + Q.length : "") + "…"; }
+    else if (Q.length) { cls = "err"; txt = Q.length + " venter på nett"; }
+    el.className = "mpbar " + cls; el.innerHTML = `<i></i><span>${esc(txt)}</span>`;
+  }
 
   function gate(msg) {
     return new Promise(resolve => {
       const g = document.createElement("div"); g.className = "mpgate"; g.setAttribute("role", "dialog"); g.setAttribute("aria-label", "Koble til data");
       g.innerHTML = `<div class="in"><h1>Morgenpuls</h1>
-        <p>Appen viser dataene dine fra det private repoet <b>${OWNER}/${REPO}</b>. Lim inn den personlige nøkkelen din fra GitHub én gang på denne enheten.</p>
+        <p>Appen leser og lagrer dataene dine i det private repoet <b>${OWNER}/${REPO}</b>. Lim inn den personlige nøkkelen din fra GitHub én gang på denne enheten.</p>
         <p class="e" id="mpe">${esc(msg || "")}</p>
         <label for="mptok"><b>Nøkkel</b> (starter med <code>github_pat_</code>)</label>
         <input id="mptok" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_…">
         <div class="row"><button class="btn primary" id="mpgo" type="button">Koble til</button></div>
-        <p class="muted" style="font-size:13px">Nøkkelen lagres bare på denne enheten og sendes bare til api.github.com. Den skal ha <b>kun lesetilgang</b> til <b>kun</b> repoet ${REPO}.</p></div>`;
+        <p class="muted" style="font-size:13px">Nøkkelen lagres bare på denne enheten og sendes bare til api.github.com. Den skal gjelde <b>kun</b> repoet ${REPO}, med <b>Contents: Read and write</b>. Da kan du skrive i appen, og det du skriver havner i repoet.</p></div>`;
       document.body.appendChild(g);
       const go = async () => { const t = g.querySelector("#mptok").value.trim(); const e = g.querySelector("#mpe");
         if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(t)) { e.textContent = "Det ser ikke ut som en GitHub-nøkkel."; return; }
         e.textContent = "Sjekker…";
-        try { const r = await fetch(API + `/repos/${OWNER}/${REPO}`, { headers: { Authorization: "Bearer " + t, Accept: "application/vnd.github+json" }, cache: "no-store" });
+        try { const r = await fetch(API + R, { headers: { Authorization: "Bearer " + t, Accept: "application/vnd.github+json" }, cache: "no-store" });
           if (r.status === 401) { e.textContent = "GitHub godtok ikke nøkkelen."; return; }
           if (r.status === 404 || r.status === 403) { e.textContent = "Nøkkelen har ikke tilgang til repoet " + REPO + "."; return; }
           if (!r.ok) { e.textContent = "GitHub svarte " + r.status + ". Prøv igjen."; return; }
-          await KV.set("token", t); g.remove(); resolve(t);
+          const j = await r.json();
+          if (j.permissions && j.permissions.push === false) { e.textContent = "Nøkkelen kan bare lese. Den må ha Contents: Read and write for at du skal kunne skrive i appen."; return; }
+          await KV.set("token", t); token = t; g.remove(); resolve(t);
         } catch { e.textContent = "Fikk ikke kontakt med GitHub. Sjekk nettet."; } };
       g.querySelector("#mpgo").onclick = go; g.querySelector("#mptok").addEventListener("keydown", ev => { if (ev.key === "Enter") go(); });
       setTimeout(() => g.querySelector("#mptok").focus(), 50);
     });
   }
+
   function settings() {
     const g = document.createElement("div"); g.className = "mpgate";
-    g.innerHTML = `<div class="in"><h1>Data</h1><p>Sist oppdatert i repoet: <b>${fmt(DATA?.generated_at)}</b>. Morgenkjøringen lager en ny kopi hver morgen.</p>
-      <p class="muted" style="font-size:13px">Appen er skrivebeskyttet. Endringer gjør du i Morgenpuls i Claude, så kommer de hit etter neste morgenkjøring.</p>
-      <div class="row"><button class="btn primary" id="mpref" type="button">Hent på nytt</button><button class="btn" id="mpx" type="button">Lukk</button></div>
-      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%"><p><b>Fjern nøkkelen fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alle lagrede data på denne enheten. Repoet påvirkes ikke.</span></p>
+    g.innerHTML = `<div class="in"><h1>Data</h1>
+      <p>Siste store kopi i repoet: <b>${esc(fmt(BUNDLE.generated_at))}</b>. Endringer du gjør lagres med en gang, hver for seg.</p>
+      <p class="muted" style="font-size:13px">${Q.length ? esc(Q.length + " endring(er) venter på å bli lagret. De ligger trygt på enheten til nettet er tilbake.") : "Alt er lagret."}${lastErr ? " Siste feil: " + esc(lastErr) : ""}</p>
+      <div class="row"><button class="btn primary" id="mpref" type="button">Hent på nytt</button>${Q.length ? '<button class="btn" id="mpq" type="button">Prøv å lagre nå</button>' : ""}<button class="btn" id="mpx" type="button">Lukk</button></div>
+      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%"><p><b>Fjern nøkkelen fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alt som er lagret lokalt. Repoet påvirkes ikke. Endringer som ikke er lagret ennå, går tapt.</span></p>
       <div class="row"><button class="btn" id="mpdel" type="button" style="color:var(--accent,#d7262e)">Fjern nøkkel og data</button></div></div>`;
     document.body.appendChild(g);
     g.querySelector("#mpx").onclick = () => g.remove();
-    g.querySelector("#mpref").onclick = async () => { g.remove(); await refresh(true); };
-    g.querySelector("#mpdel").onclick = async () => { await KV.del("token"); await KV.del("data"); await KV.del("etag"); try { await caches.delete("mp-assets"); } catch {} location.reload(); };
+    g.querySelector("#mpref").onclick = async () => { g.remove(); await refresh(); };
+    const qb = g.querySelector("#mpq"); if (qb) qb.onclick = async () => { g.remove(); await pump(); };
+    g.querySelector("#mpdel").onclick = async () => { for (const k of ["token", "bundle", "ov", "meta", "queue"]) await KV.del(k).catch(() => {}); try { await caches.delete("mp-assets"); } catch {} location.reload(); };
   }
 
-  // ---------- henting ----------
-  let token = null;
-  async function refresh(manual) {
-    setBar("", "Henter data…");
-    try {
-      const etag = await KV.get("etag"); const h = etag && DATA ? { "If-None-Match": etag } : {};
-      const r = await gh(`/repos/${OWNER}/${REPO}/contents/bundle/data.json?ref=main`, token, h);
-      if (r.status === 304) { setBar(age(), "Data " + fmt(DATA.generated_at)); return; }
-      if (r.status === 401 || r.status === 403 || r.status === 404) { await KV.del("token"); token = await gate(r.status === 401 ? "Nøkkelen er utløpt eller trukket tilbake. Lag en ny." : "Nøkkelen har ikke lenger tilgang til repoet."); return refresh(manual); }
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const d = await r.json(); DATA = d; await KV.set("data", d); await KV.set("etag", r.headers.get("ETag") || "");
-      postAssets(); listeners.forEach(l => l()); ready(); setBar(age(), "Data " + fmt(d.generated_at));
-    } catch (e) { setBar("err", DATA ? "Uten nett · data " + fmt(DATA.generated_at) : "Fikk ikke hentet data"); }
+  function postAssets() { navigator.serviceWorker?.controller?.postMessage({ type: "cfg", token, assets: BUNDLE.assets || {} }); }
+
+  async function refresh() {
+    try { await pull(); await pump(); lastErr = null; }
+    catch (e) { lastErr = e.message || String(e); }
+    bar();
   }
-  const age = () => DATA && Date.now() - new Date(DATA.generated_at) > 36 * 3600e3 ? "old" : "";
-  function postAssets() { navigator.serviceWorker?.controller?.postMessage({ type: "cfg", token, assets: DATA?.assets || {} }); }
 
   async function start() {
     if ("serviceWorker" in navigator) {
@@ -529,14 +673,19 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     }
     token = await KV.get("token").catch(() => null);
     if (!token) token = await gate();
-    const cached = await KV.get("data").catch(() => null);
-    if (cached) { DATA = cached; ready(); listeners.forEach(l => l()); setBar(age(), "Data " + fmt(cached.generated_at)); postAssets(); }
-    await refresh(false);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(false); });
+    BUNDLE = (await KV.get("bundle").catch(() => null)) || BUNDLE;
+    OV = (await KV.get("ov").catch(() => null)) || Object.create(null);
+    META = (await KV.get("meta").catch(() => null)) || { head: null };
+    Q = (await KV.get("queue").catch(() => null)) || [];
+    if (BUNDLE.generated_at || Object.keys(OV).length) { ready(); notify(); postAssets(); }
+    bar();
+    await refresh();
+    ready();
+    notify();
+    addEventListener("online", () => refresh());
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
   }
-  // skrivebeskyttet: ingen redigerbare felt
-  const lockEdit = () => document.querySelectorAll('[contenteditable]:not([contenteditable="false"])').forEach(e => e.setAttribute("contenteditable", "false"));
-  new MutationObserver(lockEdit).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["contenteditable"] });
+  window.__mp = { refresh, pump, pull, state: () => ({ head: META.head, bundle: BUNDLE.generated_at, kø: Q.length, overlay: Object.keys(OV).length, feil: lastErr }) };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();
 
@@ -1324,7 +1473,7 @@ function blockHtml(b, i, blocks){
   if (b.t === "file") { const src = blobUrl(b.asset); return `<div class="nb link" data-bid="${b.id}">${src ? `<a class="bookmark" href="${esc(src)}" target="_blank" rel="noopener"><b>${esc(b.text || "Dokument")}</b><span class="muted">${esc([b.kind || "Fil", b.pages ? b.pages + " sider" : "", b.size ? fmtSize(b.size) : ""].filter(Boolean).join(" · "))} · åpne</span></a>` : `<div class="muted">Filen mangler</div>`}<button class="x" data-nbdel="${b.id}" aria-label="Fjern filen">×</button></div>`; }
   if (b.t === "page") { const c = noteById(b.ref); return `<div class="nb page" data-bid="${b.id}"><button class="pagelink" data-nopen="${esc(b.ref || "")}"><span class="pgicon">▤</span>${esc(c ? (c.title || "Uten tittel") : "Slettet side")}</button><button class="x" data-nbdel="${b.id}" aria-label="Fjern lenken">×</button></div>`; }
   const pre = b.t === "todo" ? `<input type="checkbox" class="ncheck" data-ntodo="${b.id}" ${b.done ? "checked" : ""} aria-label="Ferdig">` : b.t === "ul" ? `<span class="nbul">•</span>` : b.t === "ol" ? `<span class="nbul tnum">${num}.</span>` : "";
-  return `<div class="nb ${b.t}${b.done ? " done" : ""}"${b.j ? ' data-j="1"' : ""} data-bid="${b.id}">${pre}<div class="nt" ${ce} data-ph="${b.j ? "Skriv dette i Morgenpuls i Claude" : b.t === "p" ? "Appen viser bare. Skriv i Morgenpuls i Claude." : esc(BT[b.t])}">${esc(b.text || "")}</div></div>`;
+  return `<div class="nb ${b.t}${b.done ? " done" : ""}"${b.j ? ' data-j="1"' : ""} data-bid="${b.id}">${pre}<div class="nt" ${ce} data-ph="${b.j ? "Skriv her" : b.t === "p" ? "Skriv, eller / for blokker" : esc(BT[b.t])}">${esc(b.text || "")}</div></div>`;
 }
 function noteEditor(n){
   const bc = breadcrumb(n), links = [...new Set(((n.blocks || []).map(b => b.text || "").join("\n").match(/\[\[([^\]]+)\]\]/g) || []).map(x => x.slice(2, -2).trim()))];
@@ -1788,7 +1937,7 @@ function journalCard(){
     ${kind === "fri" ? `<ul class="jlist">${c.fri.prompts.map(p => `<li>${esc(p)}</li>`).join("")}</ul><p class="muted" style="font-size:14px">${esc(c.fri.note)}</p>`
       : `<p class="muted" style="font-size:14px">Gi uka 1 til 10 på Enjoyment, Satisfaction og Meaning. Velg så én ting å gjøre mer av.</p><div class="jdeep"><span class="eyebrow">Ukas dypere spørsmål · ${esc(tenOf(w).title)}</span><p style="margin:4px 0 0;font-size:14px">${esc(tenOf(w).q)}</p></div>`}
     ${hist.length && kind === "sun" ? `<div class="jhist">${["Enjoyment","Satisfaction","Meaning"].map(l => `<div><span class="muted">${l[0]}</span>${hist.map(h => `<i title="Uke ${h.w}: ${h.s[l] ?? "–"}" style="height:${(h.s[l] || 0) * 3.2}px"></i>`).join("")}</div>`).join("")}<span class="muted" style="font-size:12px">Siste ${hist.length} uker</span></div>` : ""}
-    <div><button class="btn ${done ? "" : "primary"}" data-journal="1">${"Åpne ukas side"}</button></div></div>`;
+    <div><button class="btn ${done ? "" : "primary"}" data-journal="1">${done ? "Åpne ukas side" : n ? "Fortsett å skrive" : "Skriv i journalen"}</button></div></div>`;
 }
 
 /* ---------- studie til kort ---------- */
@@ -2102,7 +2251,7 @@ document.addEventListener("submit", async e => {
 });
 
 /* ---------- skriving ---------- */
-const writeErr = err => err?.code === "read_only" ? "Appen viser bare. Endre dette i Morgenpuls i Claude." : err?.code === "not_granted" ? "Du har ikke skrivetilgang til denne siden." : "Kunne ikke lagre. Sjekk nettet og prøv igjen.";
+const writeErr = err => err?.code === "sync" ? "Lagret på enheten. Sendes til repoet når nettet er tilbake." : err?.code === "not_granted" ? "Du har ikke skrivetilgang til denne siden." : "Kunne ikke lagre. Sjekk nettet og prøv igjen.";
 const curRecipe = () => S.recipes.find(x => x.id === S.recipeId);
 async function saveConfig(patch){ if (!S.db) return; try { await S.db.doc("config/main").set({...(S.config || {}), ...patch, updated_at: new Date().toISOString()}); toast("Temaer lagret"); } catch (err) { toast(writeErr(err)); } }
 async function saveRecipe(id, patch, msg){ try { await S.db.doc("recipes/" + id).update({...patch, updated_at: new Date().toISOString()}); if (msg) toast(msg); if (patch.notes) { const n = $("#notein"); if (n) n.value = ""; } } catch (err) { toast(writeErr(err)); } }
