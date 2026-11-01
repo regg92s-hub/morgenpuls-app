@@ -94,6 +94,9 @@ p{margin:0}
 input.txt,textarea.txt,select.txt{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
 textarea.txt{min-height:110px;resize:vertical;line-height:1.45}
 label.lbl{display:grid;gap:5px;font-size:13px;font-weight:600}
+.modal{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center;padding:0}
+.modal .sheet{background:var(--surface);color:var(--fg);width:100%;max-width:560px;max-height:82vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 30px rgba(0,0,0,.18)}
+@media (min-width:640px){.modal{align-items:center}.modal .sheet{border-radius:16px}}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:20;max-width:calc(100% - 32px)}
 
 /* oversikt */
@@ -389,7 +392,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 @media (prefers-reduced-motion:no-preference){.card,.study,.news{animation:in .25s ease-out both}@keyframes in{from{transform:translateY(4px)}to{transform:none}}}
 </style>
 <style>/* appen skriver til repoet, men har ingen Claude: skjul bare det som krever AI */
-#ncap,#ncap2,#nimport,#ncards{display:none!important}</style>
+#nimport,#ncards{display:none!important}</style>
 </head>
 <body>
 
@@ -488,7 +491,34 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       commit: async () => { for (const o of ops) await write(o[0], o[1], o[2]); } }; } };
 
   let ready; const dbReady = new Promise(r => ready = r);
-  window.claude = { use: async name => name === "db" ? (await dbReady, db) : null };
+
+  /* ---------- bilder og filer (assets) ---------- */
+  const HEX = "0123456789abcdef";
+  const nyId = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2, "0")).join(""); };
+  const ENDELSE = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg", "application/pdf": "pdf" };
+  const assets = {
+    async upload(file) {
+      if (!file) throw { code: "no_file" };
+      if (file.size > 10 * 1024 * 1024) throw { code: "too_large", message: "Filen er større enn 10 MB" };
+      const ext = ENDELSE[file.type] || (file.name || "").split(".").pop()?.toLowerCase();
+      if (!ext || !/^[a-z0-9]{1,5}$/.test(ext)) throw { code: "unsupported_type" };
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = ""; const C = 0x8000;
+      for (let i = 0; i < buf.length; i += C) bin += String.fromCharCode.apply(null, buf.subarray(i, i + C));
+      const id = nyId(), navn = id + "." + ext;
+      const r = await gh(`${R}/contents/assets/${navn}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "App: nytt bilde " + navn, content: btoa(bin), branch: BRANCH }) });
+      if (r.status === 403 || r.status === 401) throw { code: "not_granted", message: "Nøkkelen mangler skrivetilgang" };
+      if (!r.ok) throw { code: "upload_failed", message: "GitHub svarte " + r.status };
+      const j = await r.json().catch(() => ({}));
+      if (j.commit?.sha) META.head = j.commit.sha;
+      BUNDLE.assets = { ...(BUNDLE.assets || {}), [id]: navn };     // slik at bildet vises med én gang
+      await KV.set("bundle", BUNDLE).catch(() => {});
+      save(); postAssets();
+      return { id, url: "_blob/" + id, name: navn };
+    }
+  };
+  window.claude = { use: async name => name === "db" ? (await dbReady, db) : name === "assets" ? assets : null };
 
   /* ---------- skriving ---------- */
   async function write(path, op, data) {
@@ -618,7 +648,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 .mpgate{position:fixed;inset:0;z-index:60;background:var(--bg,#f3f2f0);color:var(--fg,#111);overflow:auto;padding:max(24px,env(safe-area-inset-top)) 16px 32px}
 .mpgate .in{max-width:520px;margin:0 auto;display:grid;gap:14px}.mpgate h1{font:800 26px/1.15 var(--f-display,sans-serif);margin:8px 0 0}
 .mpgate ol{margin:0;padding-left:20px;display:grid;gap:6px}.mpgate input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line,#ccc);background:var(--surface,#fff);font:14px var(--f-mono,monospace)}
-.mpgate .row{display:flex;gap:8px;flex-wrap:wrap}.mpgate .e{color:var(--accent,#d7262e);font-weight:600;min-height:1.2em}.mpgate code{font-size:13px}`;
+.mpgate .row{display:flex;gap:8px;flex-wrap:wrap}.mpgate .e{color:var(--accent,#d7262e);font-weight:600;min-height:1.2em}\n.mptab{width:100%;border-collapse:collapse;font-size:13px}.mptab td,.mptab th{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line,#e5e5e5);vertical-align:top}.mptab th{font-weight:600;color:var(--muted,#666);font-size:12px}.mptab .t{font-family:var(--f-mono,monospace);white-space:nowrap}.mpgate code{font-size:13px}`;
   const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmt = iso => { if (!iso) return "–"; const d = new Date(iso); return isNaN(d) ? "–" : d.toLocaleString("nb-NO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
@@ -659,19 +689,54 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     });
   }
 
+  function dager(n) {                                   // de n siste dagene med status per kilde
+    const ut = [];
+    for (let i = 0; i < n; i++) {
+      const d = new Date(Date.now() - i * 864e5);
+      const key = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      const f = docVal("feed/" + key), m = docVal("ma36/" + key);
+      ut.push({ dato: key, feed: !!f, finans: f?.finance?.status || null,
+        nyheter: f?.world?.items?.length || 0, helse: f?.health?.status || null,
+        ma36: !!m, etterslep: !!f?.etterslep });
+    }
+    return ut;
+  }
+  const prikk = ok => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ok === true ? "var(--ok,#1f8a4c)" : ok === false ? "var(--accent,#d7262e)" : "var(--warn,#b26a00)"}"></span>`;
+
   function settings() {
     const g = document.createElement("div"); g.className = "mpgate";
-    g.innerHTML = `<div class="in"><h1>Data</h1>
-      <p>Siste store kopi i repoet: <b>${esc(fmt(BUNDLE.generated_at))}</b>. Endringer du gjør lagres med en gang, hver for seg.</p>
-      <p class="muted" style="font-size:13px">${Q.length ? esc(Q.length + " endring(er) venter på å bli lagret. De ligger trygt på enheten til nettet er tilbake.") : "Alt er lagret."}${lastErr ? " Siste feil: " + esc(lastErr) : ""}</p>
+    const st = docVal("system/status") || {};
+    const kilder = Object.entries(st).filter(([k, v]) => v && typeof v === "object" && v.sist)
+      .sort((a, b) => a[0].localeCompare(b[0]));
+    const navn = { "36ma": "36MA-status", pubmed: "PubMed", meldinger: "Selskapsmeldinger", arkiv: "Ukentlig arkiv", morgen: "Morgenkjøring" };
+    const d = dager(10);
+    const rader = kilder.map(([k, v]) => {
+      const gml = Date.now() - new Date(v.sist) > 36 * 3600e3;
+      return `<tr><td>${prikk(v.status === "ok" ? (gml ? null : true) : false)} ${esc(navn[k] || k)}</td>
+        <td class="t">${esc(fmt(v.sist))}</td><td class="muted">${esc(v.note || "")}</td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted">Ingen kjøringer har meldt fra ennå.</td></tr>`;
+    const dagrader = d.map(x => `<tr><td class="t">${esc(x.dato.slice(8) + "." + x.dato.slice(5, 7))}</td>
+      <td>${prikk(x.finans === "ok" ? true : x.feed ? null : false)}</td>
+      <td>${prikk(x.nyheter > 0 ? true : x.feed ? null : false)}</td>
+      <td>${prikk(x.helse === "ok" ? true : x.helse === "venter" ? null : x.helse ? null : false)}</td>
+      <td>${prikk(x.ma36 ? true : null)}</td>
+      <td class="muted">${x.etterslep ? "hentet i etterkant" : ""}</td></tr>`).join("");
+    g.innerHTML = `<div class="in"><h1>Status</h1>
+      <p class="muted" style="font-size:13px;margin:0">Alt lagres i ditt private GitHub-repo. Appen skriver direkte dit, og kjøringene legger på innhold.</p>
+      <p><b>Denne enheten</b><br><span class="muted" style="font-size:13px">${Q.length ? esc(Q.length + " endring(er) venter på nett. De ligger trygt lagret her til nettet er tilbake.") : "Alt er lagret."}${lastErr ? " Siste feil: " + esc(lastErr) : ""}<br>Siste store kopi: ${esc(fmt(BUNDLE.generated_at))}.</span></p>
       <div class="row"><button class="btn primary" id="mpref" type="button">Hent på nytt</button>${Q.length ? '<button class="btn" id="mpq" type="button">Prøv å lagre nå</button>' : ""}<button class="btn" id="mpny" type="button">Bytt nøkkel</button><button class="btn" id="mpx" type="button">Lukk</button></div>
-      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%"><p><b>Fjern alt fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alt som er lagret lokalt, og henter alt på nytt neste gang. Repoet påvirkes ikke. Endringer som ikke er lagret ennå, går tapt. Skal du bare bytte nøkkel, bruk «Bytt nøkkel» over.</span></p>
+      <p><b>Kildene</b></p>
+      <table class="mptab"><tbody>${rader}</tbody></table>
+      <p><b>Siste ti dager</b><br><span class="muted" style="font-size:13px">Finans, nyheter, helse og 36MA. Grått betyr at det venter eller mangler.</span></p>
+      <table class="mptab"><thead><tr><th>Dag</th><th>Fin</th><th>Nyh</th><th>Hel</th><th>36MA</th><th></th></tr></thead><tbody>${dagrader}</tbody></table>
+      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%">
+      <p><b>Fjern alt fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alt som er lagret lokalt, og henter alt på nytt neste gang. Repoet påvirkes ikke. Endringer som ikke er lagret ennå, går tapt.</span></p>
       <div class="row"><button class="btn" id="mpdel" type="button" style="color:var(--accent,#d7262e)">Fjern nøkkel og data</button></div></div>`;
     document.body.appendChild(g);
     g.querySelector("#mpx").onclick = () => g.remove();
     g.querySelector("#mpref").onclick = async () => { g.remove(); await refresh(); };
-    g.querySelector("#mpny").onclick = async () => { g.remove(); await KV.del("token").catch(() => {}); token = await gate("Lim inn den nye nøkkelen. Alt du har lagret lokalt beholdes."); postAssets(); await refresh(); };
     const qb = g.querySelector("#mpq"); if (qb) qb.onclick = async () => { g.remove(); await pump(); };
+    g.querySelector("#mpny").onclick = async () => { g.remove(); await KV.del("token").catch(() => {}); token = await gate("Lim inn den nye nøkkelen. Alt du har lagret lokalt beholdes."); postAssets(); await refresh(); };
     g.querySelector("#mpdel").onclick = async () => { for (const k of ["token", "bundle", "ov", "meta", "queue"]) await KV.del(k).catch(() => {}); try { await caches.delete("mp-assets"); } catch {} location.reload(); };
   }
 
@@ -703,7 +768,24 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     addEventListener("online", () => refresh());
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
   }
-  window.__mp = { refresh, pump, pull, state: () => ({ head: META.head, bundle: BUNDLE.generated_at, kø: Q.length, overlay: Object.keys(OV).length, feil: lastErr }) };
+  /* ---------- versjonshistorikk fra git ---------- */
+  async function historikk(path, antall = 20) {
+    const r = await gh(`${R}/commits?path=${encodeURIComponent(FILE(path))}&per_page=${antall}&sha=${BRANCH}`);
+    if (!r.ok) throw new Error("Fikk ikke historikken (" + r.status + ")");
+    const j = await r.json();
+    return (Array.isArray(j) ? j : []).map(c => ({
+      sha: c.sha, når: c.commit?.committer?.date || c.commit?.author?.date,
+      hvem: c.commit?.author?.name || "", hva: (c.commit?.message || "").split("\n")[0] }));
+  }
+  async function hentVersjon(path, sha) {
+    const r = await gh(`${R}/contents/${encodeURI(FILE(path))}?ref=${sha}`, { raw: true });
+    if (!r.ok) throw new Error("Fikk ikke den versjonen (" + r.status + ")");
+    return r.json();
+  }
+  async function gjenopprett(path, sha) { const d = await hentVersjon(path, sha); await write(path, "set", d); return d; }
+
+  window.__mp = { refresh, pump, pull, historikk, hentVersjon, gjenopprett,
+    state: () => ({ head: META.head, bundle: BUNDLE.generated_at, kø: Q.length, overlay: Object.keys(OV).length, feil: lastErr }) };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();
 
@@ -1505,7 +1587,7 @@ function noteEditor(n){
     <button class="nadd" id="naddblock">+ Ny blokk</button>
     ${links.length ? `<div class="stack" style="gap:6px"><div class="eyebrow">Lenker fra siden</div><div class="chips">${links.map(t => { const tgt = S.notes.find(o => (o.title || "").toLowerCase() === t.toLowerCase()); return `<button class="chip" data-nlink="${esc(t)}">${tgt ? "" : "+ "}${esc(t)}</button>`; }).join("")}</div></div>` : ""}
     ${back.length ? `<div class="stack" style="gap:6px"><div class="eyebrow">Lenker hit</div><div class="chips">${back.map(o => `<button class="chip" data-nopen="${o.id}">${esc(o.title || "Uten tittel")}</button>`).join("")}</div></div>` : ""}
-    <div class="row nfoot"><button class="btn small" id="npin">${n.pinned ? "Fjern stjerne" : "Stjernemerk"}</button><button class="btn small" id="nsub">Ny underside</button><button class="btn small" id="ncards">Lag kort fra siden</button><button class="btn small" id="ncopy">Kopier som Markdown</button><button class="btn small" id="nmove">Flytt</button><button class="btn small ghost" id="ndel">Slett side</button></div>
+    <div class="row nfoot"><button class="btn small" id="npin">${n.pinned ? "Fjern stjerne" : "Stjernemerk"}</button><button class="btn small" id="nsub">Ny underside</button><button class="btn small" id="ncards">Lag kort fra siden</button><button class="btn small" id="ncopy">Kopier som Markdown</button><button class="btn small" id="nmove">Flytt</button>${window.__mp?.historikk ? `<button class="btn small" id="nhist">Historikk</button>` : ""}<button class="btn small ghost" id="ndel">Slett side</button></div>
     ${N.moving ? `<div class="confirm"><label class="muted" for="nmovesel">Flytt til</label><select id="nmovesel" class="txt small">${folderOptions(n.parent, n.id)}</select><button class="btn small primary" id="nmovego">Flytt</button><button class="btn small" id="nmoveno">Avbryt</button></div>` : ""}
     ${N.confirmDel ? `<div class="confirm"><span>Slette «${esc(n.title || "Uten tittel")}»? ${children(n.id).length ? "Undersidene flyttes ett nivå opp." : ""}</span><button class="btn small primary" id="ndelyes">Slett</button><button class="btn small" id="ndelno">Avbryt</button></div>` : ""}
     <div id="nslash" class="nslash" hidden></div>
@@ -1689,6 +1771,30 @@ async function capOne(job, sample, assets){
   const sumBlocks = out => { const s = (Array.isArray(out?.sammendrag) ? out.sammendrag : []).map(cleanTxt).filter(Boolean).slice(0, 8);
     const tags = (Array.isArray(out?.stikkord) ? out.stikkord : []).map(cleanTxt).filter(Boolean).slice(0, 8);
     return s.length ? [{id: bid(), t: "h2", text: "Sammendrag"}, ...s.map(t => ({id: bid(), t: "ul", text: t})), ...(tags.length ? [{id: bid(), t: "p", text: "Stikkord: " + tags.join(", ")}] : []), {id: bid(), t: "hr", text: ""}] : []; };
+  // Uten Claude (appen): legg alt i Innboks med status "venter". Morgenkjøringen leser,
+  // oppsummerer og sorterer det senere. Da virker + Legg til uansett om en kjøring går.
+  if (!sample) {
+    const inbox = await sysPage("innboks", "Innboks", {order: 0, blocks: [{id: bid(), t: "p", text: "Ting du har lagt til som ikke er sortert ennå. Lenker hentes og sorteres av morgenkjøringen."}]});
+    const legg = async (tittel, blokker, src) => { const id = await createNote({title: tittel, parent: inbox, blocks: blokker, src: {kind: "capture", status: "venter", date: day, ...src}}); await addLink(inbox, id); return id; };
+    if (job.kind === "url") {
+      const u = safeUrl(job.url); if (!u) throw {code: "bad_url"};
+      let host = ""; try { host = new URL(u).hostname.replace(/^www\./, ""); } catch {}
+      return await legg(host || "Lenke", [...head("Nettside", "venter på henting"), {id: bid(), t: "link", url: u, text: u},
+        ...(job.text ? textToBlocks(job.text.split("\n")) : [])], {type: "url", url: u});
+    }
+    if (job.kind === "text") {
+      return await legg(job.text.split("\n")[0].slice(0, 80) || "Tekst", [...head("Tekst", "venter på oppsummering"), ...textToBlocks(job.text.split("\n"))], {type: "text"});
+    }
+    if (!assets) throw {code: "no_assets"};
+    CAP.status = `Laster opp ${job.name}…`; renderCapture();
+    const up2 = await assets.upload(job.f);
+    if (job.kind === "img") {
+      let w = 0, h = 0; try { const bm = await createImageBitmap(job.f); w = bm.width; h = bm.height; bm.close && bm.close(); } catch {}
+      return await legg(job.name.replace(/\.[a-z0-9]+$/i, ""), [...head("Skjermbilde", "venter på lesing"), {id: bid(), t: "img", asset: up2.id, text: job.name, w, h}], {type: "img", asset: up2.id, name: job.name});
+    }
+    return await legg(job.name.replace(/\.pdf$/i, ""), [...head("PDF", "venter på lesing"),
+      {id: bid(), t: "file", asset: up2.id, text: job.name, kind: "PDF", size: job.f.size}], {type: "pdf", asset: up2.id, name: job.name});
+  }
   if (job.kind === "url") {
     const u = safeUrl(job.url); if (!u) throw {code: "bad_url"}; let host = ""; try { host = new URL(u).hostname.replace(/^www\./, ""); } catch {}
     if (job.text) { const out = await capClassify(sample, "text", "Lenke: " + u + "\n\n" + job.text.slice(0, 60000), note); const parent = await capPlace(out);
@@ -1735,7 +1841,7 @@ async function runCapture(){
   if (url) jobs.push({kind: "url", url, text, note, name: url}); else if (text) jobs.push({kind: "text", text, note, name: "tekst"});
   if (!jobs.length) { CAP.status = "Velg en fil, lim inn en lenke eller skriv inn tekst først."; renderCapture(); return; }
   const sample = await claude.use("sample"), assets = await claude.use("assets");
-  if (!sample) { CAP.status = "Claude-tilgang er ikke gitt for denne siden. Tillat det i sidens tillatelser."; renderCapture(); return; }
+  if (!sample && !assets) { CAP.status = "Mangler tilgang til å lagre. Sjekk nøkkelen under Status."; renderCapture(); return; }
   CAP.busy = true; CAP.stop = false; CAP.files = []; let ok = 0, fail = 0;
   for (let i = 0; i < jobs.length; i++) { const j = jobs[i]; if (CAP.stop) break;
     CAP.status = `Jobber med ${i + 1} av ${jobs.length}: ${j.name.slice(0, 60)}…`; renderCapture();
@@ -1743,7 +1849,7 @@ async function runCapture(){
     catch (e) { fail++; if (e?.code === "not_granted") { CAP.status = "Claude-tilgang ble avslått."; break; } if (e?.code === "rate_limited") { CAP.status = "For mange forespørsler. Vent litt og prøv resten igjen."; break; }
       toast(e?.code === "no_assets" ? "Opplasting krever redigeringstilgang" : e?.code === "bad_url" ? "Lenken er ugyldig" : e?.code === "too_large" ? "Filen er for stor" : "Klarte ikke å lagre " + j.name.slice(0, 40)); } }
   if (url && ok) { const a = $("#capurl"), b = $("#captext"); if (a) a.value = ""; if (b) b.value = ""; } else if (text && ok) { const b = $("#captext"); if (b) b.value = ""; }
-  CAP.busy = false; if (!/avslått|For mange/.test(CAP.status)) CAP.status = `${ok} lagt til${fail ? `, ${fail} feilet` : ""}.`;
+  CAP.busy = false; if (!/avslått|For mange/.test(CAP.status)) CAP.status = `${ok} lagt til${fail ? `, ${fail} feilet` : ""}${!sample && ok ? ". Ligger i Innboks til morgenkjøringen oppsummerer og sorterer." : "."}`;
   const side = $(".nside"); if (side) side.innerHTML = notesSide(); renderCapture();
 }
 /* hendelser i editoren */
@@ -2152,6 +2258,7 @@ document.addEventListener("click", async e => {
   const sub = t.closest("[data-sub]"); if (sub && S.view === "laering") { S.learnSub = sub.dataset.sub; S.showSettings = null; if (sub.dataset.sub === "geo") loadMaps(); render(); return; }
   // helse
   if (t.id === "edthemes") { S.editThemes = !S.editThemes; render(); return; }
+  if (t.id === "nhist") { await visHistorikk(N.open); return; }
   if (t.id === "edfollow") { S.editFollow = !S.editFollow; render(); return; }
   const hf = t.closest("[data-hfollow]"); if (hf) { S.hFollow = S.hFollow === hf.dataset.hfollow ? null : hf.dataset.hfollow; render(); return; }
   const df = t.closest("[data-delfollow]"); if (df) { const fl = (S.config?.health_follow || []).slice(); const gone = fl.splice(Number(df.dataset.delfollow), 1)[0]; if (gone && S.hFollow === gone.label) S.hFollow = null; await saveConfig({health_follow: fl}); return; }
@@ -2269,6 +2376,27 @@ document.addEventListener("submit", async e => {
 });
 
 /* ---------- skriving ---------- */
+async function visHistorikk(id){
+  const n = noteById(id); if (!n || !window.__mp?.historikk) return;
+  const d = document.createElement("div"); d.className = "modal"; d.innerHTML = `<div class="sheet stack"><div class="spread"><b>Historikk</b><button class="btn small ghost" data-lukk="1">Lukk</button></div><div id="histin" class="muted">Henter…</div></div>`;
+  document.body.appendChild(d);
+  d.addEventListener("click", async e => {
+    if (e.target.closest("[data-lukk]") || e.target === d) { d.remove(); return; }
+    const g = e.target.closest("[data-gjenopprett]"); if (!g) return;
+    if (g.dataset.bekreft !== "1") { g.dataset.bekreft = "1"; g.textContent = "Sikker?"; return; }
+    g.textContent = "Henter…";
+    try { await window.__mp.gjenopprett("notater/" + id, g.dataset.gjenopprett); d.remove(); toast("Den gamle versjonen er hentet tilbake"); render(); }
+    catch (err) { g.textContent = "Gikk ikke"; toast(err?.message || "Klarte ikke å hente tilbake"); }
+  });
+  try {
+    const liste = await window.__mp.historikk("notater/" + id, 20);
+    const nf = new Intl.DateTimeFormat("nb-NO", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+    $("#histin").innerHTML = liste.length
+      ? `<p class="muted" style="font-size:13px">Hver lagring er en versjon. Henter du tilbake en gammel, blir den den nye siste versjonen, og ingenting går tapt.</p>` +
+        liste.map((v, i) => `<div class="row spread" style="padding:7px 0;border-bottom:1px solid var(--line)"><span><b class="tnum">${esc(nf.format(new Date(v.når)))}</b> <span class="muted">${esc(v.hva.slice(0, 44))}</span></span>${i === 0 ? `<span class="muted">nåværende</span>` : `<button class="btn small" data-gjenopprett="${esc(v.sha)}">Hent tilbake</button>`}</div>`).join("")
+      : `<p class="muted">Fant ingen tidligere versjoner.</p>`;
+  } catch (err) { $("#histin").textContent = err?.message || "Klarte ikke å hente historikken"; }
+}
 const writeErr = err => err?.code === "sync" ? "Lagret på enheten. Sendes til repoet når nettet er tilbake." : err?.code === "not_granted" ? "Du har ikke skrivetilgang til denne siden." : "Kunne ikke lagre. Sjekk nettet og prøv igjen.";
 const curRecipe = () => S.recipes.find(x => x.id === S.recipeId);
 async function saveConfig(patch){ if (!S.db) return; try { await S.db.doc("config/main").set({...(S.config || {}), ...patch, updated_at: new Date().toISOString()}); toast("Temaer lagret"); } catch (err) { toast(writeErr(err)); } }
