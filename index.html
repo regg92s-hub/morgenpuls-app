@@ -1324,7 +1324,7 @@ function blockHtml(b, i, blocks){
   if (b.t === "file") { const src = blobUrl(b.asset); return `<div class="nb link" data-bid="${b.id}">${src ? `<a class="bookmark" href="${esc(src)}" target="_blank" rel="noopener"><b>${esc(b.text || "Dokument")}</b><span class="muted">${esc([b.kind || "Fil", b.pages ? b.pages + " sider" : "", b.size ? fmtSize(b.size) : ""].filter(Boolean).join(" · "))} · åpne</span></a>` : `<div class="muted">Filen mangler</div>`}<button class="x" data-nbdel="${b.id}" aria-label="Fjern filen">×</button></div>`; }
   if (b.t === "page") { const c = noteById(b.ref); return `<div class="nb page" data-bid="${b.id}"><button class="pagelink" data-nopen="${esc(b.ref || "")}"><span class="pgicon">▤</span>${esc(c ? (c.title || "Uten tittel") : "Slettet side")}</button><button class="x" data-nbdel="${b.id}" aria-label="Fjern lenken">×</button></div>`; }
   const pre = b.t === "todo" ? `<input type="checkbox" class="ncheck" data-ntodo="${b.id}" ${b.done ? "checked" : ""} aria-label="Ferdig">` : b.t === "ul" ? `<span class="nbul">•</span>` : b.t === "ol" ? `<span class="nbul tnum">${num}.</span>` : "";
-  return `<div class="nb ${b.t}${b.done ? " done" : ""}"${b.j ? ' data-j="1"' : ""} data-bid="${b.id}">${pre}<div class="nt" ${ce} data-ph="${b.j ? "Skriv her" : b.t === "p" ? "Skriv, eller / for blokker" : esc(BT[b.t])}">${esc(b.text || "")}</div></div>`;
+  return `<div class="nb ${b.t}${b.done ? " done" : ""}"${b.j ? ' data-j="1"' : ""} data-bid="${b.id}">${pre}<div class="nt" ${ce} data-ph="${b.j ? "Skriv dette i Morgenpuls i Claude" : b.t === "p" ? "Appen viser bare. Skriv i Morgenpuls i Claude." : esc(BT[b.t])}">${esc(b.text || "")}</div></div>`;
 }
 function noteEditor(n){
   const bc = breadcrumb(n), links = [...new Set(((n.blocks || []).map(b => b.text || "").join("\n").match(/\[\[([^\]]+)\]\]/g) || []).map(x => x.slice(2, -2).trim()))];
@@ -1788,7 +1788,7 @@ function journalCard(){
     ${kind === "fri" ? `<ul class="jlist">${c.fri.prompts.map(p => `<li>${esc(p)}</li>`).join("")}</ul><p class="muted" style="font-size:14px">${esc(c.fri.note)}</p>`
       : `<p class="muted" style="font-size:14px">Gi uka 1 til 10 på Enjoyment, Satisfaction og Meaning. Velg så én ting å gjøre mer av.</p><div class="jdeep"><span class="eyebrow">Ukas dypere spørsmål · ${esc(tenOf(w).title)}</span><p style="margin:4px 0 0;font-size:14px">${esc(tenOf(w).q)}</p></div>`}
     ${hist.length && kind === "sun" ? `<div class="jhist">${["Enjoyment","Satisfaction","Meaning"].map(l => `<div><span class="muted">${l[0]}</span>${hist.map(h => `<i title="Uke ${h.w}: ${h.s[l] ?? "–"}" style="height:${(h.s[l] || 0) * 3.2}px"></i>`).join("")}</div>`).join("")}<span class="muted" style="font-size:12px">Siste ${hist.length} uker</span></div>` : ""}
-    <div><button class="btn ${done ? "" : "primary"}" data-journal="1">${done ? "Åpne ukas side" : n ? "Fortsett å skrive" : "Skriv i journalen"}</button></div></div>`;
+    <div><button class="btn ${done ? "" : "primary"}" data-journal="1">${"Åpne ukas side"}</button></div></div>`;
 }
 
 /* ---------- studie til kort ---------- */
