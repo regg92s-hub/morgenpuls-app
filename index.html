@@ -636,6 +636,21 @@ function studyCard(s){
   </article>`;
 }
 const themesOf = s => Array.isArray(s.themes) && s.themes.length ? s.themes : String(s.theme || "").split("·").map(x => x.trim()).filter(Boolean);
+function followPanel(h){
+  const fl = S.config?.health_follow || [], data = h?.follow || [];
+  const byL = l => data.find(x => x.label === l);
+  const chips = fl.map((t, i) => S.editFollow
+    ? `<span class="chip">${esc(t.label)}<button class="x" data-delfollow="${i}" aria-label="Slutt å følge ${esc(t.label)}">×</button></span>`
+    : `<button class="chip ${S.hFollow === t.label ? "sel" : ""}" data-hfollow="${esc(t.label)}" aria-pressed="${S.hFollow === t.label}">${esc(t.label)}<span class="cnt tnum">${byL(t.label)?.total ?? "–"}</span></button>`).join("");
+  const sel = S.hFollow && byL(S.hFollow);
+  return `<div class="panel stack">
+    <div class="spread"><span class="eyebrow">Du følger</span><button class="btn small ghost" id="edfollow">${S.editFollow ? "Ferdig" : "Endre"}</button></div>
+    <p class="muted" style="font-size:13px;margin:0">Kosttilskudd, matretter eller dietter. Morgenkjøringen ser etter nye studier om hver av dem siste 30 dager, også på smalere grupper.</p>
+    <div class="chips">${chips || `<span class="muted">Ingenting ennå. Trykk Endre og legg til for eksempel Kreatin eller Keto.</span>`}</div>
+    ${S.editFollow ? `<form id="addfollow" class="row"><input id="followin" class="txt" style="flex:1;min-width:160px" placeholder="F.eks. Kreatin, Keto, Omega-3, Kaffe" maxlength="60"><button class="btn small">Følg</button></form><p class="muted" style="font-size:13px">Endringer brukes fra neste morgenoppdatering.</p>` : ""}
+    ${!S.editFollow && S.hFollow ? (sel ? `<div class="muted" style="font-size:13px">${sel.total ?? 0} nye studier om ${esc(sel.label)} siste 30 dager${sel.items?.length ? `, her er de ${sel.items.length} mest relevante` : ""}.</div>${(sel.items || []).map(studyCard).join("")}` : `<div class="muted" style="font-size:13px">Kommer med neste morgenoppdatering.</div>`) : ""}
+  </div>`;
+}
 function vHealth(){
   const f = feed(), h = f?.health, themes = S.config?.health_themes || [];
   const counts = h?.counts || {}; const order = ["RCT","Oversikt","Observasjon","Kasus","Annet"];
@@ -660,6 +675,7 @@ function vHealth(){
       ${S.editThemes ? `<form id="addtheme" class="row"><input id="themein" class="txt" style="flex:1;min-width:160px" placeholder="Nytt tema, f.eks. Søvn eller Kreatin" maxlength="60"><button class="btn small">Legg til</button></form><p class="muted" style="font-size:13px">Endringer brukes fra neste morgenoppdatering.</p>` : `<p class="muted" style="font-size:13px">Trykk på et tema eller en studietype for å filtrere.</p>`}
     </div>
   </div>
+  ${followPanel(h)}
   ${filtered ? `<div class="spread"><span class="muted" style="font-size:14px">Viser ${items.length} av ${all.length} utvalgte studier${S.hTheme ? ` · ${esc(S.hTheme)}` : ""}${S.hType ? ` · ${esc(TYPES[S.hType].l)}` : ""}${S.hBig ? " · 300+ deltakere" : ""}</span><button class="btn small" id="hreset">Vis alle</button></div>` : ""}
   ${items.length ? items.map(studyCard).join("") : (all.length ? `<div class="empty"><b>Ingen av dagens utvalgte studier passer filteret.</b><br>Tallene øverst gjelder alle treff denne uka, listen viser bare et utvalg.</div>` : emptyFeed("studier"))}
   ${h?.note ? `<p class="muted" style="font-size:13px">${esc(h.note)}</p>` : ""}`;
@@ -1969,6 +1985,9 @@ document.addEventListener("click", async e => {
   const sub = t.closest("[data-sub]"); if (sub && S.view === "laering") { S.learnSub = sub.dataset.sub; S.showSettings = null; if (sub.dataset.sub === "geo") loadMaps(); render(); return; }
   // helse
   if (t.id === "edthemes") { S.editThemes = !S.editThemes; render(); return; }
+  if (t.id === "edfollow") { S.editFollow = !S.editFollow; render(); return; }
+  const hf = t.closest("[data-hfollow]"); if (hf) { S.hFollow = S.hFollow === hf.dataset.hfollow ? null : hf.dataset.hfollow; render(); return; }
+  const df = t.closest("[data-delfollow]"); if (df) { const fl = (S.config?.health_follow || []).slice(); const gone = fl.splice(Number(df.dataset.delfollow), 1)[0]; if (gone && S.hFollow === gone.label) S.hFollow = null; await saveConfig({health_follow: fl}); return; }
   const dt = t.closest("[data-deltheme]"); if (dt) { const th = (S.config?.health_themes || []).slice(); const gone = th.splice(Number(dt.dataset.deltheme), 1)[0]; if (gone && S.hTheme === gone.label) S.hTheme = null; await saveConfig({health_themes: th}); return; }
   const ht = t.closest("[data-htheme]"); if (ht) { S.hTheme = S.hTheme === ht.dataset.htheme ? null : ht.dataset.htheme; render(); return; }
   const hy = t.closest("[data-htype]"); if (hy) { S.hType = S.hType === hy.dataset.htype ? null : hy.dataset.htype; render(); return; }
@@ -2060,6 +2079,7 @@ document.addEventListener("keydown", e => {
 });
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target;
+  if (f.id === "addfollow") { const v = $("#followin").value.trim(); if (!v) return; const fl = (S.config?.health_follow || []).slice(); if (fl.some(x => x.label.toLowerCase() === v.toLowerCase())) { toast("Du følger allerede " + v); return; } fl.push({label: v}); await saveConfig({health_follow: fl}); return; }
   if (f.id === "addtheme") { const v = $("#themein").value.trim(); if (!v) return; const th = (S.config?.health_themes || []).slice(); th.push({label: v}); await saveConfig({health_themes: th}); return; }
   if (f.id === "noteform") { const r = curRecipe(), txt = $("#notein").value.trim(); if (!r || !txt) return;
     const notes = (r.notes||[]).slice(); notes.push({date: osloDate(), verdict: S.verdict || "endring", text: txt}); await saveRecipe(r.id, {notes}, "Notat lagret"); return; }
