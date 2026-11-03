@@ -94,6 +94,9 @@ p{margin:0}
 input.txt,textarea.txt,select.txt{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
 textarea.txt{min-height:110px;resize:vertical;line-height:1.45}
 label.lbl{display:grid;gap:5px;font-size:13px;font-weight:600}
+.mer{margin-top:14px;text-align:left;font-size:14px;color:var(--muted)}
+.mer summary{cursor:pointer;font-size:13px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted);padding:4px 0}
+.mer[open] summary{margin-bottom:8px}
 .modal{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center;padding:0}
 .modal .sheet{background:var(--surface);color:var(--fg);width:100%;max-width:560px;max-height:82vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 30px rgba(0,0,0,.18)}
 @media (min-width:640px){.modal{align-items:center}.modal .sheet{border-radius:16px}}
@@ -1147,7 +1150,7 @@ const histById = id => S.hist.find(c => c.id === id);
 function cardFace(deck, cid, back){
   if (deck === "vg3") {
     const c = (S.vg3Cards || []).find(x => x.id === cid.slice(2)); if (!c) return `<div class="muted">Kortet er slettet.</div>`;
-    return `<div class="prompt">${esc(c.kap || "Historie Vg3")}</div><div class="q hq">${esc(c.q)}</div>` + (back ? `<div class="ans"><div class="info" style="font-size:16px;color:var(--fg);text-align:left;white-space:pre-line">${esc(c.a)}</div></div>` : "");
+    return `<div class="prompt">${esc(c.kap || "Historie Vg3")}</div><div class="q hq">${esc(c.q)}</div>` + (back ? `<div class="ans"><div class="info" style="font-size:16px;color:var(--fg);text-align:left;white-space:pre-line">${esc(c.a)}</div>${c.mer && c.mer !== c.a ? `<details class="mer"><summary>Hele svaret ditt</summary><div style="white-space:pre-line">${esc(c.mer)}</div></details>` : ""}</div>` : "");
   }
   if (deck === "own") {
     const c = (S.ownCards || []).find(x => x.id === cid.slice(2)); if (!c) return `<div class="muted">Kortet er slettet.</div>`;
