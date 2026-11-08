@@ -596,7 +596,16 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     if (r.status === 404) return false;
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
+    const forrige = BUNDLE.collections || {};
     BUNDLE = { generated_at: d.generated_at || null, collections: d.collections || {}, assets: d.assets || {} };
+    // Store samlinger ligger i egne filer (bundle/<navn>.json) slik at den daglige
+    // kopien holder seg liten. Feiler en av dem, beholder vi den forrige utgaven
+    // i stedet for å vise en tom samling.
+    for (const navn of (d.ekstra || [])) {
+      let docs = null;
+      try { const rr = await gh(`${R}/contents/bundle/${navn}.json?ref=${BRANCH}`, { raw: true }); if (rr.ok) docs = (await rr.json()).docs || {}; } catch {}
+      BUNDLE.collections[navn] = docs || forrige[navn] || {};
+    }
     await KV.set("bundle", BUNDLE);
     const cut = BUNDLE.generated_at || "";
     for (const [p, o] of Object.entries(OV)) if (o.t < cut && !Q.some(x => x.path === p)) delete OV[p];   // bundelen har tatt den igjen
@@ -625,7 +634,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       const cr = await gh(`${R}/compare/${META.head}...${head}`);
       if (cr.ok) { const c = await cr.json();
         if (!c.files || c.files.length <= 300) {
-          if ((c.files || []).some(f => f.filename === "bundle/data.json")) await loadBundle();
+          if ((c.files || []).some(f => /^bundle\/[a-z0-9-]+\.json$/.test(f.filename || ""))) await loadBundle();
           await applyFiles(c.files || []); done = true;
         } }
     }
@@ -1482,17 +1491,23 @@ function posBar(p){
 /* ---------- egne kort ---------- */
 function ownPanel(){
   const g = S.gen, cards = S.ownCards || [], srcs = [...new Set(cards.map(c => c.source || "Uten kilde"))];
+  // I app-utgaven er window.__mp satt av shimen, og der finnes ingen AI. Da lages
+  // kortene av morgenkjøringen i stedet, og generatorfeltene skjules.
+  const harAI = !window.__mp;
   return `<div class="panel stack" id="genpanel"><h2>Lag kort fra det du leser</h2>
-    <p class="muted" style="font-size:14px">Lim inn notater, et kapittel eller en artikkel. Claude lager spørsmål og svar som går inn i repetisjonen. Du ser kortene før de lagres.</p>
-    <label class="lbl" for="gen-src">Kilde<input id="gen-src" class="txt" placeholder="F.eks. Armstrong: Understanding The World Economy, kap. 3" value="${esc(g.source || "")}" maxlength="120"></label>
+    <p class="muted" style="font-size:14px">${harAI ? "Lim inn notater, et kapittel eller en artikkel. Claude lager spørsmål og svar som går inn i repetisjonen. Du ser kortene før de lagres." : "Her i appen lages kortene av morgenkjøringen: åpne et notat og trykk «Foreslå kort i morgen». Forslagene kommer opp her, og du godkjenner dem før de lagres."}</p>
+    ${harAI ? `<label class="lbl" for="gen-src">Kilde<input id="gen-src" class="txt" placeholder="F.eks. Armstrong: Understanding The World Economy, kap. 3" value="${esc(g.source || "")}" maxlength="120"></label>
     <label class="lbl" for="gen-text">Tekst<textarea id="gen-text" class="txt" style="min-height:150px" placeholder="Lim inn tekst her">${esc(g.text || "")}</textarea></label>
     <div class="row"><label class="lbl" for="gen-n" style="flex:0 0 140px">Antall kort<input id="gen-n" class="txt" type="number" min="3" max="30" value="${g.n || 10}"></label>
       <label class="lbl" for="gen-style" style="flex:1;min-width:180px">Type<select id="gen-style" class="txt"><option value="fakta" ${g.style!=="forstaa"?"selected":""}>Fakta og begreper</option><option value="forstaa" ${g.style==="forstaa"?"selected":""}>Forståelse (hvorfor og hvordan)</option></select></label></div>
-    <div class="row"><button class="btn primary" id="gen-go" ${g.busy ? "disabled" : ""}>${g.busy ? "Claude lager kort…" : "Lag kort"}</button><span class="muted" id="gen-status" style="font-size:13px">${esc(g.status || "")}</span></div>
+    <div class="row"><button class="btn primary" id="gen-go" ${g.busy ? "disabled" : ""}>${g.busy ? "Claude lager kort…" : "Lag kort"}</button><span class="muted" id="gen-status" style="font-size:13px">${esc(g.status || "")}</span></div>` : `<p class="muted" id="gen-status" style="font-size:13px">${esc(g.status || "")}</p>`}
     ${g.preview?.length ? `<div class="stack"><div class="eyebrow">Forslag · ${g.preview.filter(p => p.keep).length} av ${g.preview.length} valgt</div>
       ${g.preview.map((p, i) => `<div class="genrow ${p.keep ? "" : "off"}"><label class="check"><input type="checkbox" data-genkeep="${i}" ${p.keep ? "checked" : ""}></label>
         <div class="stack" style="gap:4px;min-width:0"><input class="txt" data-genq="${i}" value="${esc(p.q)}" aria-label="Spørsmål ${i + 1}"><textarea class="txt" data-gena="${i}" style="min-height:52px" aria-label="Svar ${i + 1}">${esc(p.a)}</textarea></div></div>`).join("")}
       <div class="row"><button class="btn primary" id="gen-save">Lagre ${g.preview.filter(p => p.keep).length} kort</button><button class="btn ghost" id="gen-clear">Forkast</button></div></div>` : ""}
+    ${(() => { const k = (S.notes || []).filter(n => n.kort?.status === "klar" && (n.kort.forslag || []).length);
+      return k.length ? `<div class="stack" id="forslag"><div class="eyebrow">Forslag fra notatene dine · ${k.length}</div>
+        <div class="rlist">${k.map(n => `<button class="ritem" data-kortnote="${esc(n.id)}"><span class="t">${esc(n.title || "Uten tittel")}</span><span class="s">${n.kort.forslag.length} forslag · ${esc(n.kort.date || "")}</span></button>`).join("")}</div></div>` : ""; })()}
     <details><summary class="muted" style="cursor:pointer;font-size:14px">Legg til ett kort selv</summary>
       <form id="manualcard" class="stack" style="margin-top:10px"><input id="mc-q" class="txt" placeholder="Spørsmål" maxlength="400"><textarea id="mc-a" class="txt" style="min-height:60px" placeholder="Svar" maxlength="1500"></textarea><div><button class="btn small">Legg til</button></div></form></details>
   </div>
@@ -1500,6 +1515,14 @@ function ownPanel(){
     ${srcs.map(src => { const cs = cards.filter(c => (c.source || "Uten kilde") === src); const open = S.ownOpen === src;
       return `<div class="srcgrp"><button class="srchead" data-ownsrc="${esc(src)}" aria-expanded="${open}"><b>${esc(src)}</b><span class="muted tnum">${cs.length} kort ${open ? "▴" : "▾"}</span></button>
         ${open ? `<div class="notes">${cs.map(c => `<div class="owncard"><div><b>${esc(c.q)}</b><br><span class="muted">${esc(c.a)}</span></div><button class="x" data-delcard="${esc(c.id)}" aria-label="Slett kort">×</button></div>`).join("")}</div>` : ""}</div>`; }).join("")}</div>` : ""}`;
+}
+// Forslagene blir staaende paa notatet, bare status endres. Ingenting slettes.
+async function kortFerdig(id){
+  const n = (S.notes || []).find(x => x.id === id); if (!n || !n.kort) return;
+  n.kort = {...n.kort, status: "ferdig", brukt: osloDate()};
+  n.updated_at = new Date().toISOString();
+  const {id: nid, ...d} = n;
+  try { await S.db.doc("notater/" + nid).set(d); } catch (e) { toast("Fikk ikke lagret at forslagene er brukt."); }
 }
 async function generateCards(){
   const g = S.gen; g.text = $("#gen-text").value.trim(); g.source = $("#gen-src").value.trim(); g.n = Math.max(3, Math.min(30, Number($("#gen-n").value) || 10)); g.style = $("#gen-style").value;
@@ -1590,7 +1613,7 @@ function noteEditor(n){
     <button class="nadd" id="naddblock">+ Ny blokk</button>
     ${links.length ? `<div class="stack" style="gap:6px"><div class="eyebrow">Lenker fra siden</div><div class="chips">${links.map(t => { const tgt = S.notes.find(o => (o.title || "").toLowerCase() === t.toLowerCase()); return `<button class="chip" data-nlink="${esc(t)}">${tgt ? "" : "+ "}${esc(t)}</button>`; }).join("")}</div></div>` : ""}
     ${back.length ? `<div class="stack" style="gap:6px"><div class="eyebrow">Lenker hit</div><div class="chips">${back.map(o => `<button class="chip" data-nopen="${o.id}">${esc(o.title || "Uten tittel")}</button>`).join("")}</div></div>` : ""}
-    <div class="row nfoot"><button class="btn small" id="npin">${n.pinned ? "Fjern stjerne" : "Stjernemerk"}</button><button class="btn small" id="nsub">Ny underside</button><button class="btn small" id="ncards">Lag kort fra siden</button><button class="btn small" id="ncopy">Kopier som Markdown</button><button class="btn small" id="nmove">Flytt</button>${window.__mp?.historikk ? `<button class="btn small" id="nhist">Historikk</button>` : ""}<button class="btn small ghost" id="ndel">Slett side</button></div>
+    <div class="row nfoot"><button class="btn small" id="npin">${n.pinned ? "Fjern stjerne" : "Stjernemerk"}</button><button class="btn small" id="nsub">Ny underside</button><button class="btn small" id="ncards">Lag kort fra siden</button><button class="btn small" id="nask">${n.kort?.status === "venter" ? "Kort kommer i morgen" : n.kort?.status === "klar" ? "Kortforslag klare" : "Foreslå kort i morgen"}</button><button class="btn small" id="ncopy">Kopier som Markdown</button><button class="btn small" id="nmove">Flytt</button>${window.__mp?.historikk ? `<button class="btn small" id="nhist">Historikk</button>` : ""}<button class="btn small ghost" id="ndel">Slett side</button></div>
     ${N.moving ? `<div class="confirm"><label class="muted" for="nmovesel">Flytt til</label><select id="nmovesel" class="txt small">${folderOptions(n.parent, n.id)}</select><button class="btn small primary" id="nmovego">Flytt</button><button class="btn small" id="nmoveno">Avbryt</button></div>` : ""}
     ${N.confirmDel ? `<div class="confirm"><span>Slette «${esc(n.title || "Uten tittel")}»? ${children(n.id).length ? "Undersidene flyttes ett nivå opp." : ""}</span><button class="btn small primary" id="ndelyes">Slett</button><button class="btn small" id="ndelno">Avbryt</button></div>` : ""}
     <div id="nslash" class="nslash" hidden></div>
@@ -1682,6 +1705,11 @@ const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + 
 
 /* ---------- Legg til: skjermbilder, PDF-er, lenker og tekst ---------- */
 const CAP = {files: [], busy: false, status: "", done: [], stop: false};
+// Podkast: lenken gir ikke innholdet, og lyden kan ikke leses her. Slike merkes
+// src.type "podcast" og hentes av morgenkjøringen, som lager sammendrag og
+// handlingspunkter. Haker brukeren av selv, gjelder det uansett vert.
+const PODVERT = /(^|\.)(open\.spotify\.com|podcasts\.apple\.com|pca\.st|pod\.link|podtail\.com|acast\.com|podbean\.com|buzzsprout\.com|megaphone\.fm|libsyn\.com|simplecast\.com|transistor\.fm|captivate\.fm|redcircle\.com|spreaker\.com|overcast\.fm|fountain\.fm|podme\.com|radio\.nrk\.no)$/i;
+const erPodkast = (u, valgt) => { if (valgt) return true; try { return PODVERT.test(new URL(u).hostname); } catch { return false; } };
 const capKind = f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || "") ? "pdf" : /^image\//.test(f.type) ? "img" : null;
 function capAddFiles(list){ let bad = 0; for (const f of list) { const k = capKind(f); if (!k) { bad++; continue; } if (f.size > 20 * 1048576) { toast("«" + (f.name || "fil") + "» er over 20 MB"); continue; } CAP.files.push({f, kind: k, name: f.name || (k === "img" ? "Skjermbilde " + osloDate() + ".png" : "Dokument.pdf")}); }
   if (bad) toast("Bare bilder og PDF støttes"); renderCapture(); }
@@ -1701,6 +1729,7 @@ function captureView(){
     <input id="capurl" class="txt" type="url" inputmode="url" placeholder="Lenke til en nettside (https://…)" aria-label="Lenke">
     <textarea id="captext" class="txt" rows="4" placeholder="…eller lim inn tekst" aria-label="Tekst"></textarea>
     <input id="capnote" class="txt" placeholder="Valgfritt: hvorfor lagrer du dette?" aria-label="Kommentar">
+    <label class="lbl" for="cappod" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="cappod" class="ncheck"><span>Podkast: jeg vil ha sammendrag og handlingspunkter</span></label>
     <div class="row"><button class="btn primary" id="capgo">Lagre og sorter</button><button class="btn small ghost" id="capstop" hidden>Stopp etter denne</button></div>
     <div id="capout">${capOut()}</div>
   </div>`;
@@ -1782,10 +1811,12 @@ async function capOne(job, sample, assets){
     if (job.kind === "url") {
       const u = safeUrl(job.url); if (!u) throw {code: "bad_url"};
       let host = ""; try { host = new URL(u).hostname.replace(/^www\./, ""); } catch {}
-      return await legg(host || "Lenke", [...head("Nettside", "venter på henting"), {id: bid(), t: "link", url: u, text: u},
-        ...(job.text ? textToBlocks(job.text.split("\n")) : [])], {type: "url", url: u});
+      const pod = erPodkast(u, job.pod);
+      return await legg(host || "Lenke", [...head(pod ? "Podkast" : "Nettside", pod ? "venter på sammendrag og handlingspunkter" : "venter på henting"), {id: bid(), t: "link", url: u, text: u},
+        ...(job.text ? textToBlocks(job.text.split("\n")) : [])], pod ? {type: "podcast", url: u, form: "url", transkript: !!job.text} : {type: "url", url: u});
     }
     if (job.kind === "text") {
+      if (job.pod) return await legg(job.text.split("\n")[0].slice(0, 80) || "Podkast", [...head("Podkast", "venter på sammendrag og handlingspunkter"), ...textToBlocks(job.text.split("\n"))], {type: "podcast", form: "text", transkript: true});
       return await legg(job.text.split("\n")[0].slice(0, 80) || "Tekst", [...head("Tekst", "venter på oppsummering"), ...textToBlocks(job.text.split("\n"))], {type: "text"});
     }
     if (!assets) throw {code: "no_assets"};
@@ -1800,6 +1831,11 @@ async function capOne(job, sample, assets){
   }
   if (job.kind === "url") {
     const u = safeUrl(job.url); if (!u) throw {code: "bad_url"}; let host = ""; try { host = new URL(u).hostname.replace(/^www\./, ""); } catch {}
+    if (erPodkast(u, job.pod)) {
+      const inbox = await sysPage("innboks", "Innboks", {order: 0, blocks: [{id: bid(), t: "p", text: "Ting du har lagt til som ikke er sortert ennå. Lenker hentes og sorteres av morgenkjøringen."}]});
+      const id = await createNote({title: host || "Podkast", parent: inbox, blocks: [...head("Podkast", "venter på sammendrag og handlingspunkter"), {id: bid(), t: "link", url: u, text: u}, ...(job.text ? textToBlocks(job.text.split("\n")) : [])], src: {kind: "capture", type: "podcast", url: u, form: "url", transkript: !!job.text, status: "venter", date: day}});
+      await addLink(inbox, id); return id;
+    }
     if (job.text) { const out = await capClassify(sample, "text", "Lenke: " + u + "\n\n" + job.text.slice(0, 60000), note); const parent = await capPlace(out);
       const id = await createNote({title: cleanTxt(out.tittel) || host, parent, blocks: [...head("Nettside", host), ...sumBlocks(out), {id: bid(), t: "link", url: u, text: cleanTxt(out.tittel) || host}, ...textToBlocks(job.text.split("\n"))], src: {kind: "capture", type: "url", url: u, status: "ferdig", date: day}});
       await addLink(parent, id); return id; }
@@ -1840,8 +1876,9 @@ async function capOne(job, sample, assets){
 async function runCapture(){
   if (CAP.busy || !S.db) return;
   const url = ($("#capurl")?.value || "").trim(), text = ($("#captext")?.value || "").trim(), note = ($("#capnote")?.value || "").trim();
+  const pod = !!$("#cappod")?.checked;
   const jobs = CAP.files.map(x => ({...x, note}));
-  if (url) jobs.push({kind: "url", url, text, note, name: url}); else if (text) jobs.push({kind: "text", text, note, name: "tekst"});
+  if (url) jobs.push({kind: "url", url, text, note, pod, name: url}); else if (text) jobs.push({kind: "text", text, note, pod, name: "tekst"});
   if (!jobs.length) { CAP.status = "Velg en fil, lim inn en lenke eller skriv inn tekst først."; renderCapture(); return; }
   const sample = await claude.use("sample"), assets = await claude.use("assets");
   if (!sample && !assets) { CAP.status = "Mangler tilgang til å lagre. Sjekk nøkkelen under Status."; renderCapture(); return; }
@@ -1942,6 +1979,9 @@ async function notesClick(t){
   const lk = t.closest("[data-nlink]"); if (lk) { const title = lk.dataset.nlink; const tgt = S.notes.find(o => (o.title || "").toLowerCase() === title.toLowerCase()); await saveNote(); openNote(tgt ? tgt.id : await createNote({title})); return true; }
   if (t.id === "npin") { const n = curNote(); n.pinned = !n.pinned; N.dirty = true; await saveNote(); render(); return true; }
   if (t.id === "nsub") { const n = curNote(); const cid = await createNote({parent: n.id, title: "Ny side"}); n.blocks.push({id: bid(), t: "page", ref: cid, text: ""}); N.dirty = true; await saveNote(); N.expanded[n.id] = true; openNote(cid); return true; }
+  if (t.id === "nask") { const n = curNote();
+    if (n.kort?.status === "klar") { S.learnSub = "own"; go("laering"); setTimeout(() => $("#forslag")?.scrollIntoView({behavior: "smooth"}), 60); return true; }
+    n.kort = {status: "venter", date: osloDate(), n: 10}; touchNote(); await saveNote(); toast("Morgenkjøringen foreslår kort fra siden."); render(); return true; }
   if (t.id === "ncards") { const n = curNote(); await saveNote(); S.gen.text = (n.blocks || []).filter(b => b.text).map(b => b.text).join("\n"); S.gen.source = n.title || "Notat"; S.gen.preview = []; S.learnSub = "own"; go("laering"); setTimeout(() => $("#genpanel")?.scrollIntoView({behavior: "smooth"}), 60); return true; }
   if (t.id === "ncopy") { const n = curNote(); let k = 0; const md = "# " + (n.title || "Uten tittel") + "\n\n" + (n.blocks || []).map(b => { if (b.t !== "ol") k = 0;
       return b.t === "h1" ? "# " + b.text : b.t === "h2" ? "## " + b.text : b.t === "h3" ? "### " + b.text : b.t === "ul" ? "- " + b.text : b.t === "ol" ? (++k) + ". " + b.text : b.t === "todo" ? (b.done ? "- [x] " : "- [ ] ") + b.text : b.t === "quote" || b.t === "callout" ? "> " + b.text : b.t === "code" ? "```\n" + b.text + "\n```" : b.t === "hr" ? "---" : b.t === "page" ? "[[" + (noteById(b.ref)?.title || "Side") + "]]" : b.t === "link" ? "[" + (b.text || b.url) + "](" + b.url + ")" : b.t === "img" ? "![" + (b.cap || "bilde") + "](" + blobUrl(b.asset) + ")" : b.t === "file" ? "[" + (b.text || "Fil") + "](" + blobUrl(b.asset) + ")" : b.t === "score" ? "**" + b.label + ":** " + (b.value ?? "–") + "/10" : b.text; }).join("\n");
@@ -2252,8 +2292,14 @@ document.addEventListener("click", async e => {
   const rg = t.closest("[data-recgo]"); if (rg) { S.recipeId = rg.dataset.recgo; S.recipeMode = "list"; go("kokk"); return; }
   if (S.view === "notater" && await notesClick(t)) return;
   if (t.id === "gen-go") { generateCards(); return; }
-  if (t.id === "gen-clear") { S.gen.preview = []; render(); return; }
-  if (t.id === "gen-save") { const keep = S.gen.preview.filter(p => p.keep && p.q.trim() && p.a.trim()); if (await saveCards(keep, S.gen.source)) { S.gen = {...S.gen, text: "", preview: [], status: ""}; S.ownOpen = S.gen.source || "Uten kilde"; render(); } return; }
+  const kfn = t.closest("[data-kortnote]");
+  if (kfn) { const n = (S.notes || []).find(x => x.id === kfn.dataset.kortnote); if (!n) return;
+    S.gen = {...S.gen, text: "", source: n.title || "Notat", n: (n.kort.forslag || []).length,
+      preview: (n.kort.forslag || []).map(f => ({q: String(f.q || ""), a: String(f.a || ""), keep: true})),
+      status: "Forslag fra morgenkjøringen " + (n.kort.date || "") + ". Rett det du vil, og lagre.", fraNotat: n.id};
+    render(); setTimeout(() => $("#genpanel")?.scrollIntoView({behavior: "smooth"}), 60); return; }
+  if (t.id === "gen-clear") { if (S.gen.fraNotat) await kortFerdig(S.gen.fraNotat); S.gen = {...S.gen, preview: [], status: "", fraNotat: null}; render(); return; }
+  if (t.id === "gen-save") { const keep = S.gen.preview.filter(p => p.keep && p.q.trim() && p.a.trim()); if (await saveCards(keep, S.gen.source)) { if (S.gen.fraNotat) await kortFerdig(S.gen.fraNotat); S.gen = {...S.gen, text: "", preview: [], status: "", fraNotat: null}; S.ownOpen = S.gen.source || "Uten kilde"; render(); } return; }
   const gk = t.closest("[data-genkeep]"); if (gk) { S.gen.preview[Number(gk.dataset.genkeep)].keep = gk.checked; gk.closest(".genrow").classList.toggle("off", !gk.checked); const b = $("#gen-save"); if (b) b.textContent = `Lagre ${S.gen.preview.filter(p => p.keep).length} kort`; return; }
   const os = t.closest("[data-ownsrc]"); if (os) { S.ownOpen = S.ownOpen === os.dataset.ownsrc ? null : os.dataset.ownsrc; render(); return; }
   const dc = t.closest("[data-delcard]"); if (dc) { try { await S.db.doc("kort/" + dc.dataset.delcard).delete(); toast("Kort slettet"); } catch (err) { toast(writeErr(err)); } return; }
