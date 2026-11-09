@@ -415,6 +415,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       <button class="tab" role="tab" data-v="kokk">Kokk<span class="n" id="n-kokk"></span></button>
       <button class="tab" role="tab" data-v="laering">Læring<span class="n" id="n-laering"></span></button>
       <button class="tab" role="tab" data-v="gitar">Gitar</button>
+      <button class="tab" role="tab" data-v="uke">Uke<span class="n" id="n-uke"></span></button>
       <button class="tab" role="tab" data-v="notater">Notater</button>
     </nav>
   </header>
@@ -443,6 +444,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
   /* ---------- lokal tilstand ---------- */
   // BUNDLE: bulk-kopien fra repoet. OV: dokumenter som er nyere enn bundelen (egne og andres skrivinger).
   let BUNDLE = { generated_at: null, collections: {}, assets: {} };
+  const SKJEMA = 2;   // hoyeste bundelformat denne utgaven av appen forstar
   let OV = Object.create(null);         // "samling/id" -> {d: data|null, t: iso, sha: string|null}
   let META = { head: null };
   let Q = [];                            // skrivekø som overlever omstart
@@ -596,6 +598,17 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     if (r.status === 404) return false;
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
+    // Et appskall som er cachet av en gammel service worker kan møte et nyere
+    // bundelformat. Da er det tryggere å laste siden på nytt én gang enn å vise
+    // tomme samlinger. Flagget i sessionStorage hindrer evig omlasting.
+    if (Number(d.schemaVersion || 1) > SKJEMA) {
+      let prøvd = false;
+      try { prøvd = sessionStorage.getItem("mp-skjema") === String(d.schemaVersion); } catch {}
+      try { sessionStorage.setItem("mp-skjema", String(d.schemaVersion)); } catch {}
+      if (!prøvd) { location.reload(); return false; }
+      lastErr = "Appen er for gammel for dataformatet (" + d.schemaVersion + " mot " + SKJEMA + "). Lukk og åpne appen på nytt.";
+      notify(); return false;
+    }
     const forrige = BUNDLE.collections || {};
     BUNDLE = { generated_at: d.generated_at || null, collections: d.collections || {}, assets: d.assets || {} };
     // Store samlinger ligger i egne filer (bundle/<navn>.json) slik at den daglige
@@ -823,6 +836,8 @@ const S = {
   geo: null, flags: null, maps: null, mapsLoading: false,
   L: {geo: null, hist: null}, Lloaded: {}, hist: null, learnSub: "geo", session: null, showSettings: null, tpDoc: {}, editThemes: false,
   hType: null, hTheme: null, trading: null, notes: [], ownCards: null, gen: {text:"", source:"", n:10, style:"fakta", preview:[], busy:false, status:""}, ownOpen: null,
+  styrke: [], hSub: "studier", stSist: "", rlog: null, sri: null, sovn: [], debriefer: [], ukeSvar: null, ukeValgt: "",
+  ukeSub: "debrief", annot: [], forsok: [], fValgt: "", fNy: false,
   G: {fb:{}, fbDays:{}, fbNat:true, ear:{ok:0, n:0}, earMode:"iv", earLevel:"lett", known:[]}, gSub: "fb", gItems: [], gLog: [], fb: null, ear: null, fbStreak: 0,
 };
 const TYPES = {RCT:{l:"RCT",c:"var(--accent)"}, Oversikt:{l:"Oversikter",c:"var(--fg)"}, Observasjon:{l:"Observasjon",c:"var(--muted)"}, Kasus:{l:"Kasus",c:"var(--line)"}, Annet:{l:"Annet",c:"var(--surface-2)"}};
@@ -834,7 +849,7 @@ const CARDTYPES = {flag:"Flagg → land", map:"Kart → land", cap:"Land → hov
 const feed = () => S.feeds[S.feedIdx] || null;
 
 /* ---------- navigasjon ---------- */
-const VIEWS = ["idag","helse","finans","trading","nyheter","kokk","laering","gitar","notater","sok"];
+const VIEWS = ["idag","helse","finans","trading","nyheter","kokk","laering","gitar","uke","notater","sok"];
 function go(v){ if (!VIEWS.includes(v)) v = "idag"; S.view = v; try { history.replaceState(null, "", "#" + v); } catch {} store.set("mp.view", v);
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === v)));
   if (v === "laering" && S.learnSub === "geo") loadMaps(); render(); window.scrollTo({top:0}); }
@@ -858,7 +873,7 @@ function renderHeader(){
 
 /* ---------- render ---------- */
 function render(){ renderHeader(); if (S.view === "notater" && (editorFocused() || (N.importing && document.activeElement?.closest?.(".imp") && document.activeElement.matches("input:not([type=file]),textarea,select")) || (N.capturing && document.activeElement?.closest?.(".cap") && document.activeElement.matches("input:not([type=file]),textarea,select")))) return; if (S.view === "sok" && document.activeElement?.id === "gsearch") { const r = $("#sres"); if (r) r.innerHTML = searchResults(); return; } const m = $("#main");
-  const fn = {idag:vToday, helse:vHealth, finans:vFinance, trading:vTrading, nyheter:vWorld, kokk:vKitchen, laering:vLearn, gitar:vGuitar, notater:vNotes, sok:vSearch}[S.view];
+  const fn = {idag:vToday, helse:vHealth, finans:vFinance, trading:vTrading, nyheter:vWorld, kokk:vKitchen, laering:vLearn, gitar:vGuitar, uke:vUke, notater:vNotes, sok:vSearch}[S.view];
   m.innerHTML = `<section class="view">${fn()}</section>`; }
 
 function emptyFeed(what){ return `<div class="empty"><b>Ingen ${what} for denne dagen ennå.</b><br>Den daglige oppdateringen kjører hver morgen og fyller denne fanen. Første kjøring legges inn i dag.</div>`; }
@@ -913,6 +928,219 @@ function followPanel(h){
   </div>`;
 }
 function vHealth(){
+  const sub = S.hSub || "studier";
+  const tabs = `<div class="subtabs">${[["studier","Studier"],["styrke","Styrke"],["sovn","Søvn"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-hsub="${k}">${l}</button>`).join("")}</div>`;
+  if (sub === "styrke") return `<div class="stack">${tabs}${vStyrke()}</div>`;
+  if (sub === "sovn") return `<div class="stack">${tabs}${vSovn()}</div>`;
+  return tabs + vStudier();
+}
+/* Soevnregularitet. SRI er det beste maalet vi har paa noe du faktisk kan styre:
+   Windred et al. (SLEEP 2024, UK Biobank, 60 997 med gyldig skaar) fant 20 til 48
+   prosent lavere all-cause doedelighet i de fire oeverste kvintilene (71,6 til
+   98,5) mot den nederste. Tallet her er regnet fra soevnvinduer, ikke fra
+   aksellerometer per epoke, saa det er sammenlignbart med seg selv over tid og
+   ikke tall-for-tall med studien. */
+function vSovn(){
+  const d = S.sri, netter = (S.sovn || []).slice(0, 28);
+  const sisteUke = netter.slice(0, 7).map(n => n.minutter || 0).filter(Boolean);
+  const snitt = sisteUke.length ? Math.round(sisteUke.reduce((a, b) => a + b, 0) / sisteUke.length) : null;
+  const timer = m => Math.floor(m / 60) + " t " + String(m % 60).padStart(2, "0") + " min";
+  if (!d || d.sri === null || d.sri === undefined) return `<div class="panel stack">
+    <h2>Søvnregularitet</h2>
+    <p class="muted">Ingen søvndata ennå. Henting fra Garmin krever hemmeligheten GARMIN_API_KEY i repoet. Uten den står resten av appen som før.</p>
+    ${netter.length ? `<p class="muted" style="font-size:13px">${netter.length} netter er lagret, men indeksen trenger minst ${esc(String((S.sri?.min_par) || 7))} nabopar.</p>` : ""}</div>`;
+  const v = d.sri, oevre = (d.kvintiler?.oevre_fire || [71.6, 98.5])[0];
+  const farge = d.mistenkelig ? "err" : v >= oevre ? "ok" : v >= 60 ? "" : "err";
+  const sorter = [...netter].sort((a, b) => String(a.dag).localeCompare(String(b.dag)));
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>Søvnregularitet</h2><span class="muted tnum" style="font-size:13px">${esc(d.vindu_dager || 28)} døgn</span></div>
+      <div class="row" style="align-items:baseline;gap:12px">
+        <span class="big ${farge}" style="font-size:40px;font-weight:600">${v.toFixed(1)}</span>
+        <span class="muted">SRI av 100, regnet fra ${d.par} nabopar</span>
+      </div>
+      ${d.mistenkelig ? `<p class="warn">Negativ indeks betyr systematisk motfase døgn for døgn. Det er nesten alltid et dataproblem, ikke en skår. Se på de lagrede nettene før du tolker noe.</p>` : ""}
+      ${!d.nok_data ? `<p class="muted">Færre enn ${esc(String(d.min_par || 7))} nabopar. Tallet vises, men det er for tynt å trekke noe av.</p>` : ""}
+      <p class="muted" style="font-size:13px">De fire øverste kvintilene i UK Biobank lå på ${esc(String(oevre))} til ${esc(String((d.kvintiler?.oevre_fire || [0, 98.5])[1]))} og hadde 20 til 48 prosent lavere dødelighet enn den nederste. ${esc(d.grunnlag || "")}</p>
+    </div>
+    ${snitt ? `<div class="panel stack"><div class="eyebrow">Søvnlengde siste uke</div><div class="row" style="align-items:baseline;gap:10px"><b style="font-size:24px">${esc(timer(snitt))}</b><span class="muted">snitt av ${sisteUke.length} netter</span></div></div>` : ""}
+    ${sorter.length ? `<div class="panel stack"><div class="eyebrow">Nettene som er med</div>
+      <div class="notes">${sorter.slice(-14).reverse().map(n => `<div class="lrow"><div class="lco"><b>${esc(n.dag)}</b><span class="muted">${(n.vinduer || []).map(w => String(w.start).slice(11, 16) + " til " + String(w.slutt).slice(11, 16)).join(", ") || "ingen vinduer"}</span></div><div class="lt tnum">${esc(timer(n.minutter || 0))}</div></div>`).join("")}</div>
+      <p class="muted" style="font-size:13px">Natten hører til døgnet den ender i. Et døgn regnes først med i indeksen når natten etter også er registrert, ellers ville kvelden stått som våken.</p></div>` : ""}
+  </div>`;
+}
+/* Ukesdebrief. Tannenbaum og Cerasolis metaanalyse (31 studier, N = 2 136) ga
+   d = .67 for debrief som ritual, og de fire noedvendige trekkene styrer
+   utformingen her: appen stiller spoersmaal i stedet for aa vise grafer, rammen
+   er hva du endrer og ikke om du traff maalene, hendelsene er navngitte med
+   referanse til dokumentet de kommer fra, og din egen vurdering staar sammen med
+   en maskingenerert kilde. Harkin et al. (138 studier, N = 18 398) fant at privat
+   monitorering alene bare ga d+ = 0,19 mot 0,43 naar det skrives fysisk ned, og
+   det er grunnen til at arkiveringen som notat er en del av tiltaket. */
+function ukeValgt(){
+  const liste = S.debriefer || [];
+  if (!liste.length) return null;
+  return liste.find(d => d.uke === S.ukeValgt) || liste[0];
+}
+function vUke(){
+  const sub = S.ukeSub || "debrief";
+  const tabs = `<div class="subtabs">${[["debrief","Debrief"],["endringer","Endringer"],["forsok","Forsøk"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-ukesub="${k}">${l}</button>`).join("")}</div>`;
+  if (sub === "endringer") return `<div class="stack">${tabs}${vEndringer()}</div>`;
+  if (sub === "forsok") return `<div class="stack">${tabs}${vForsok()}</div>`;
+  return `<div class="stack">${tabs}${vDebrief()}</div>`;
+}
+
+/* Annotasjonslaget. Dette er minimumsforsvaret mot slutning fra hukommelse:
+   Self-E fant at 15 av 16 deltakere endret noe og sammenlignet mot hukommelsen,
+   og bare 3 vurderte konfundere som helg. En datert endring koblet til seriene
+   krever ingen randomisering og er derfor bygget foerst. */
+const ATYPER = [["kosthold","Kosthold"],["trening","Trening"],["sovn","Søvn"],["tilskudd","Tilskudd"],["trading","Trading"],["arbeid","Arbeid"],["annet","Annet"]];
+function vEndringer(){
+  const liste = (S.annot || []).slice().sort((a, b) => String(b.dato).localeCompare(String(a.dato)));
+  return `<div class="stack">
+    <div class="panel stack">
+      <h2>Endringer du har gjort</h2>
+      <p class="muted" style="font-size:14px">Skriv ned hva du endrer, den dagen du endrer det. Uten dette blir enhver senere sammenligning en sammenligning mot hukommelsen, og den taper alltid.</p>
+      <form id="annotform" class="stack" style="gap:8px">
+        <div class="row">
+          <label class="lbl" for="a-dato" style="flex:0 0 150px">Dato<input id="a-dato" class="txt" type="date" value="${esc(osloDate())}"></label>
+          <label class="lbl" for="a-type" style="flex:1;min-width:140px">Type<select id="a-type" class="txt">${ATYPER.map(([k,l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
+        </div>
+        <input id="a-tekst" class="txt" placeholder="Hva endret du? For eksempel: kuttet kaffe etter 12" maxlength="200">
+        <div><button class="btn primary small">Lagre endringen</button></div>
+      </form>
+    </div>
+    ${liste.length ? `<div class="panel stack"><div class="eyebrow">Logg · ${liste.length}</div>
+      <div class="notes">${liste.slice(0, 40).map(a => `<div class="note"><span class="d">${esc(a.dato)}</span><span>${esc(a.tekst)}</span><span class="muted" style="font-size:12px">${esc((ATYPER.find(t => t[0] === a.type) || ["","Annet"])[1])}</span></div>`).join("")}</div>
+      <p class="muted" style="font-size:13px">Endringene vises som konfundere i forsøkene som overlapper dem i tid.</p></div>` : ""}
+  </div>`;
+}
+
+/* n-of-1. Tildelingen regnes ut en gang, her, fra et lagret froe, og den vises
+   bare til og med i dag. Da kan den ikke endres underveis, og du kan ikke se
+   morgendagens betingelse og tilpasse deg den. Analysen gjoeres i kode av
+   tools/eksperiment.py, ikke her: det er ett riktig svar, og da skal det ikke
+   finnes to implementasjoner av det. */
+function froeRekke(froe, dager){
+  // Samme parvise balansering som i Python: hvert par inneholder en A og en B.
+  let x = froe >>> 0; const rnd = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const ut = [];
+  for (let i = 0; i < Math.ceil(dager / 2); i++) ut.push(...(rnd() < 0.5 ? ["A","B"] : ["B","A"]));
+  return ut.slice(0, dager);
+}
+function vForsok(){
+  const liste = (S.forsok || []).slice().sort((a, b) => String(b.start).localeCompare(String(a.start)));
+  const e = liste.find(x => x.id === S.fValgt) || liste[0];
+  if (S.fNy || !liste.length) return vNyttForsok(liste.length);
+  const idag = osloDate();
+  const idx = e.tildeling ? Math.floor((Date.parse(idag) - Date.parse(e.start)) / 86400000) : -1;
+  const iGang = idx >= 0 && idx < (e.tildeling || []).length;
+  const dagens = iGang ? e.tildeling[idx] : null;
+  const logget = (e.logg || []).find(r => r.dato === idag);
+  const a = e.analyse;
+  const navn = k => k === "A" ? (e.a_navn || "A") : (e.b_navn || "B");
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>${esc(e.tittel)}</h2><button class="btn small" id="f-nytt">Nytt forsøk</button></div>
+      <p class="muted" style="font-size:13px">${esc(e.start)} til ${esc(e.slutt)} · måler ${esc(e.effekt)}${e.enhet ? " (" + esc(e.enhet) + ")" : ""} · ${esc(navn("A"))} mot ${esc(navn("B"))}</p>
+      ${liste.length > 1 ? `<div class="subtabs">${liste.slice(0, 6).map(x => `<button class="btn small ${x.id === e.id ? "primary" : ""}" data-forsok="${esc(x.id)}">${esc(String(x.tittel).slice(0, 18))}</button>`).join("")}</div>` : ""}
+    </div>
+
+    ${iGang ? `<div class="panel stack">
+      <div class="eyebrow">I dag · dag ${idx + 1} av ${(e.tildeling || []).length}</div>
+      <div class="row" style="align-items:baseline;gap:10px"><b style="font-size:22px">${esc(navn(dagens))}</b><span class="muted">er dagens tildeling</span></div>
+      <form id="forsokform" class="stack" style="gap:8px">
+        <label class="lbl" for="f-verdi">${esc(e.effekt)}${e.enhet ? " i " + esc(e.enhet) : ""}<input id="f-verdi" class="txt" type="number" step="any" inputmode="decimal" value="${logget && logget.verdi !== null && logget.verdi !== undefined ? esc(String(logget.verdi)) : ""}" placeholder="Tall"></label>
+        <label class="lbl" for="f-fulgt">Hva fulgte du faktisk?<select id="f-fulgt" class="txt">
+          <option value="${esc(dagens)}" ${!logget || logget.fulgt === dagens ? "selected" : ""}>${esc(navn(dagens))} (som tildelt)</option>
+          <option value="${dagens === "A" ? "B" : "A"}" ${logget && logget.fulgt && logget.fulgt !== dagens ? "selected" : ""}>${esc(navn(dagens === "A" ? "B" : "A"))} (avvek)</option></select></label>
+        <div><button class="btn primary small">${logget ? "Oppdater dagen" : "Lagre dagen"}</button></div>
+      </form>
+    </div>` : `<div class="panel stack"><div class="eyebrow">${idx < 0 ? "Starter " + esc(e.start) : "Ferdig"}</div>
+      <p class="muted">${idx < 0 ? "Tildelingen er låst og vises dag for dag når forsøket er i gang." : "Perioden er over. Resultatet står under."}</p></div>`}
+
+    <div class="panel stack">
+      <div class="eyebrow">Resultat</div>
+      ${!a ? `<p class="muted">Regnes av kjøringen. ${(e.logg || []).length} dager er logget.</p>`
+        : !a.nok_data ? `<p class="muted">${esc(a.melding || "")} Nå: ${a.n.A} dager ${esc(navn("A"))}, ${a.n.B} dager ${esc(navn("B"))}.</p>`
+        : `<div class="stack" style="gap:6px">
+            <div class="row" style="align-items:baseline;gap:12px"><span style="font-size:30px;font-weight:600">${a.differanse > 0 ? "+" : ""}${esc(String(a.differanse))}</span>
+              <span class="muted">${esc(e.enhet || "forskjell")}, ${esc(navn("B"))} minus ${esc(navn("A"))}</span></div>
+            <p class="muted" style="font-size:13px">95 prosent intervall ${esc(String(a.ci95[0]))} til ${esc(String(a.ci95[1]))} · medianforskjell ${esc(String(a.hodges_lehmann))} · ${a.n.A} mot ${a.n.B} dager · etterlevelse ${esc(String(a.etterlevelse_pct))} prosent</p>
+            <p>${esc(a.tolkning)}</p>
+          </div>`}
+      ${a && (a.konfundere || []).length ? `<div class="stack" style="gap:4px"><b style="font-size:14px">Ting som kan forklare forskjellen</b>
+        <div class="notes">${a.konfundere.map(k => `<div class="note"><span>${esc(k)}</span></div>`).join("")}</div></div>` : ""}
+      <p class="muted" style="font-size:13px">Ingen p-verdi, med vilje. Ett forsøk på én person gir en pekepinn, ikke et bevis, og med ti dager i hver betingelse er intervallet hele informasjonen.</p>
+    </div>
+
+    ${(e.logg || []).length ? `<div class="panel stack"><div class="eyebrow">Logg</div>
+      <div class="notes">${(e.logg || []).slice().reverse().slice(0, 30).map(r => `<div class="lrow"><div class="lco"><b>${esc(r.dato)}</b><span class="muted">${esc(navn(r.fulgt || r.betingelse))}${r.fulgt && r.fulgt !== r.betingelse ? " (avvek fra " + esc(navn(r.betingelse)) + ")" : ""}</span></div><div class="lt tnum">${r.verdi === null || r.verdi === undefined ? "–" : esc(String(r.verdi))}</div></div>`).join("")}</div></div>` : ""}
+  </div>`;
+}
+function vNyttForsok(harNoen){
+  return `<div class="panel stack">
+    <h2>Nytt forsøk</h2>
+    <p class="muted" style="font-size:14px">Én årsak mot én effekt, betingelsen tildeles tilfeldig hver dag, og minst tre dager i hver betingelse før noe leses av. Hold deg til noe du kan måle med et tall. Subjektive konstrukter som humør er den feilen som oftest ødelegger slike forsøk.</p>
+    <form id="nyttforsok" class="stack" style="gap:8px">
+      <label class="lbl" for="nf-tittel">Tittel<input id="nf-tittel" class="txt" placeholder="Kaffe etter 12 og søvn" maxlength="80"></label>
+      <div class="row">
+        <label class="lbl" for="nf-a" style="flex:1;min-width:150px">Betingelse A<input id="nf-a" class="txt" placeholder="Som vanlig" maxlength="60"></label>
+        <label class="lbl" for="nf-b" style="flex:1;min-width:150px">Betingelse B<input id="nf-b" class="txt" placeholder="Ingen kaffe etter 12" maxlength="60"></label>
+      </div>
+      <div class="row">
+        <label class="lbl" for="nf-effekt" style="flex:2;min-width:160px">Effekt du måler<input id="nf-effekt" class="txt" placeholder="Søvnlengde" maxlength="60"></label>
+        <label class="lbl" for="nf-enhet" style="flex:1;min-width:90px">Enhet<input id="nf-enhet" class="txt" placeholder="minutter" maxlength="20"></label>
+      </div>
+      <div class="row">
+        <label class="lbl" for="nf-dager" style="flex:1;min-width:120px">Varighet<select id="nf-dager" class="txt"><option value="14">14 dager</option><option value="21" selected>21 dager</option><option value="28">28 dager</option></select></label>
+        <label class="lbl" for="nf-start" style="flex:1;min-width:140px">Start<input id="nf-start" class="txt" type="date" value="${esc(osloDate())}"></label>
+      </div>
+      <div class="row"><button class="btn primary">Start forsøket</button>${harNoen ? `<button type="button" class="btn ghost small" id="f-avbryt">Avbryt</button>` : ""}</div>
+    </form>
+  </div>`;
+}
+function vDebrief(){
+  const d = ukeValgt(), alle = S.debriefer || [];
+  const ferdige = alle.filter(x => x.status === "ferdig");
+  const maaned = osloDate().slice(0, 7);
+  const iMnd = ferdige.filter(x => String(x.til || "").slice(0, 7) === maaned).length;
+  if (!d) return `<div class="panel stack"><h2>Ukesdebrief</h2>
+    <p class="muted">Grunnlaget lages av den daglige kjøringen når uka er over. Den henter navngitte hendelser fra handelsloggen, styrkeloggen, søvnen, meldingene, shortregisteret, repetisjonene og innboksen, og stiller deg fire spørsmål om dem.</p></div>`;
+  const svar = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar.svar : (d.svar || {});
+  const grupper = {};
+  (d.hendelser || []).forEach(h => { (grupper[h.kilde] = grupper[h.kilde] || []).push(h); });
+  const antall = (d.hendelser || []).length;
+  const kanArkivere = antall >= (d.krav_hendelser || 3) && Object.values(svar).some(v => String(v || "").trim().length > 2);
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>Uke ${esc(String(d.uke).replace("-W", ", uke "))}</h2>
+        <span class="muted tnum" style="font-size:13px">${esc(d.fra)} til ${esc(d.til)}</span></div>
+      <p class="muted" style="font-size:13px">${ferdige.length} arkiverte debriefer, ${iMnd} denne måneden. ${d.status === "ferdig" ? "Denne uka er arkivert." : "Denne uka er ikke arkivert."}</p>
+      ${alle.length > 1 ? `<div class="subtabs">${alle.slice(0, 8).map(x => `<button class="btn small ${x.uke === d.uke ? "primary" : ""}" data-uke="${esc(x.uke)}">uke ${esc(String(x.uke).split("-W")[1])}${x.status === "ferdig" ? " ✓" : ""}</button>`).join("")}</div>` : ""}
+    </div>
+
+    <div class="panel stack">
+      <div class="eyebrow">Hendelser fra uka · ${antall}</div>
+      ${antall ? Object.entries(grupper).map(([kilde, hs]) => `<div class="stack" style="gap:4px">
+        <b style="font-size:14px">${esc(kilde)}</b>
+        <div class="notes">${hs.slice(0, 8).map(h => `<div class="note"><span class="d">${esc(String(h.dato || "").slice(5))}</span><span>${esc(h.tekst)}</span><span class="muted" style="font-size:12px">${esc(h.ref)}</span></div>`).join("")}</div>
+        ${hs.length > 8 ? `<span class="muted" style="font-size:13px">og ${hs.length - 8} flere</span>` : ""}</div>`).join("") : `<p class="muted">Ingen hendelser funnet for uka. Da er det ingenting å debriefe, og det er også et svar.</p>`}
+      ${antall < (d.krav_hendelser || 3) ? `<p class="warn">Under ${esc(String(d.krav_hendelser || 3))} navngitte hendelser. Da kan uka ikke arkiveres, for en debrief uten hendelser er et skjema.</p>` : ""}
+    </div>
+
+    <div class="panel stack">
+      <div class="eyebrow">Fire spørsmål</div>
+      ${(d.sporsmaal || []).map(q => `<label class="lbl" for="uq-${esc(q.id)}">${esc(q.q)}
+        <textarea id="uq-${esc(q.id)}" class="txt" data-uq="${esc(q.id)}" style="min-height:64px" ${d.status === "ferdig" ? "readonly" : ""} placeholder="${d.status === "ferdig" ? "" : "Skriv kort"}">${esc(svar[q.id] || "")}</textarea></label>`).join("")}
+      ${d.status === "ferdig"
+        ? `<p class="muted" style="font-size:13px">Arkivert${d.arkivert_notat ? " som notat" : ""}.${d.arkivert_notat ? ` <button class="btn small" data-nopen="${esc(d.arkivert_notat)}">Åpne notatet</button>` : ""}</p>`
+        : `<div class="row"><button class="btn primary" id="ukearkiv" ${kanArkivere ? "" : "disabled"}>Arkiver uka</button>
+           <span class="muted" style="font-size:13px">${kanArkivere ? "Svarene lagres og skrives som notat under Ukesdebrief." : "Svar på minst ett spørsmål først."}</span></div>`}
+    </div>
+  </div>`;
+}
+function vStudier(){
   const f = feed(), h = f?.health, themes = S.config?.health_themes || [];
   const counts = h?.counts || {}; const order = ["RCT","Oversikt","Observasjon","Kasus","Annet"];
   const tot = order.reduce((a,k) => a + (counts[k]||0), 0), all = h?.items || [];
@@ -955,8 +1183,8 @@ function newsCard(n){
 }
 function vFinance(){
   const sub = S.finSub || "news";
-  const tabs = `<div class="subtabs">${[["news","Meldinger"],["ma36","36MA-status"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-fsub="${k}">${l}</button>`).join("")}</div>`;
-  return `<div class="stack">${tabs}${sub === "ma36" ? vMa36() : `<div class="stack">${vFinNews()}</div>`}</div>`;
+  const tabs = `<div class="subtabs">${[["news","Meldinger"],["ma36","36MA-status"],["short","Short"],["marked","Marked"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-fsub="${k}">${l}</button>`).join("")}</div>`;
+  return `<div class="stack">${tabs}${sub === "ma36" ? vMa36() : sub === "short" ? vShort() : sub === "marked" ? vMarked() : `<div class="stack">${vFinNews()}${vNasdaq()}</div>`}</div>`;
 }
 function vFinNews(){
   const fi = feed()?.finance;
@@ -1023,6 +1251,146 @@ function maDetail(r){
         <p class="muted" style="font-size:13px;margin:2px 0 0">${t.cross ? `Krysset ${t.cross.dir === "opp" ? "opp over" : "ned under"} snittet ${esc(maPeriodLabel(t.cross.date, k))}${t.cross.ago ? ` (${t.cross.ago} ${t.cross.ago === 1 ? one : plural} siden)` : " (nå)"}.` : "Ingen kryss i perioden med snitt."}${t.closed ? ` Forrige ${k === "m" ? "måned" : "kvartal"} (${esc(maPeriodLabel(t.closed.period, k))}) lukket ${t.closed.above ? "over" : "under"} snittet.` : ""}</p>
         ${maSpark(t, lbl)}</div>`; }).join("")}
     <p class="muted" style="font-size:12px;margin:0">${esc(r.ticker || "")}${r.currency ? " · " + esc(r.currency) : ""}${r.first ? " · kurser fra " + esc(r.first.slice(0, 4)) : ""}${r.last_date ? " · siste kurs " + esc(r.last_date.split("-").reverse().join(".")) : ""}</p></div>`;
+}
+/* ---------- Styrke ----------
+   Panelet teller harde sett per muskelgruppe og RIR, ikke tonnasje. Grunnen er
+   at dose-responsmodelleringen til Swinton, Schoenfeld og Murphy (Sports Med
+   2024) forkastet totalvolum som prediktor, mens sett per sesjon holdt, og at
+   Robinson et al. (2024) fant at naerhet til failure driver hypertrofi. e1RM
+   vises med usikkerhetsbaand fordi prediksjonsfeilen er rundt 2,3 kg, og sett
+   med mange repetisjoner gir upaalitelige anslag. */
+const MUSKEL = [
+  [/knebøy|squat|benkbøy|hack/i, "Bein"], [/markløft|deadlift|rdl|stiff/i, "Bakside"],
+  [/legcurl|leg curl|hamstring|nordic/i, "Bakside"], [/legpress|leg press|utfall|lunge|step.?up/i, "Bein"],
+  [/hip ?thrust|rumpe|glute|sete/i, "Sete"], [/benkpress|bench|press.*bryst|dips|flyes|brystpress/i, "Bryst"],
+  [/skulderpress|militær|overhead|ohp|sidehev|lateral/i, "Skulder"], [/nedtrekk|pull.?up|pullup|kroppsheving|chin/i, "Rygg"],
+  [/roing|row|facepull|face pull|shrug/i, "Rygg"], [/curl|biceps/i, "Biceps"],
+  [/triceps|pushdown|skullcrusher|fransk/i, "Triceps"], [/leggpress|tåhev|calf/i, "Legger"],
+  [/plank|mage|crunch|ab ?wheel|hanging|kjerne/i, "Kjerne"],
+];
+const muskel = navn => (MUSKEL.find(([re]) => re.test(navn || "")) || [null, "Annet"])[1];
+const HARD_RIR = 5;        // 0 til 5 RIR regnes som et hardt sett
+const E1RM_MAKS_REPS = 8;  // over dette er e1RM-anslaget for upaalitelig
+const E1RM_SEP = 2.3;      // kg, prediksjonsfeil fra test-retest-litteraturen
+const e1rm = (kg, reps) => (!kg || !reps || reps > E1RM_MAKS_REPS) ? null : Math.round(10 * kg * (1 + reps / 30)) / 10;
+function styrkeTall(logg, idag){
+  // Uke regnes mandag til soendag, i dagnummer. Alt er ren aritmetikk.
+  const uke = d => Math.floor((dayNum(d) - 3) / 7);   // dag 3 = mandag 1970-01-05
+  const naa = uke(idag), sett = [];
+  for (const ø of logg) for (const x of (ø.sett || [])) sett.push({...x, date: ø.date, u: uke(ø.date)});
+  const per = (u, f) => sett.filter(x => x.u === u && f(x));
+  const hard = x => x.rir === null || x.rir === undefined ? false : Number(x.rir) <= HARD_RIR;
+  const grupper = {};
+  for (const x of per(naa, hard)) { const g = muskel(x.ovelse); grupper[g] = (grupper[g] || 0) + 1; }
+  const forrige = {};
+  for (const x of per(naa - 1, hard)) { const g = muskel(x.ovelse); forrige[g] = (forrige[g] || 0) + 1; }
+  const rir = {};
+  for (const x of sett) {
+    if (dayNum(idag) - dayNum(x.date) > 28 || x.rir === null || x.rir === undefined) continue;
+    (rir[x.ovelse] = rir[x.ovelse] || []).push(Number(x.rir));
+  }
+  const snittRir = Object.entries(rir).map(([ovelse, v]) => ({ovelse, rir: Math.round(10 * v.reduce((a, b) => a + b, 0) / v.length) / 10, n: v.length}))
+    .sort((a, b) => b.n - a.n);
+  const e = {};
+  for (const x of sett) { const v = e1rm(Number(x.kg), Number(x.reps)); if (v === null) continue;
+    (e[x.ovelse] = e[x.ovelse] || []).push({date: x.date, v}); }
+  const topp = Object.entries(e).map(([ovelse, v]) => {
+    v.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const siste = v[v.length - 1], gml = v.find(x => dayNum(siste.date) - dayNum(x.date) >= 56) || v[0];
+    const endring = Math.round(10 * (siste.v - gml.v)) / 10;
+    return {ovelse, siste: siste.v, dato: siste.date, fra: gml.v, fra_dato: gml.date, endring,
+            tolkbar: Math.abs(endring) >= 5, n: v.length};
+  }).sort((a, b) => b.n - a.n);
+  return {uke_hard: per(naa, hard).length, uke_lette: per(naa, x => !hard(x)).length,
+          forrige_hard: per(naa - 1, hard).length, grupper, forrige, snittRir, topp,
+          okter: new Set(sett.filter(x => x.u === naa).map(x => x.date)).size};
+}
+function vStyrke(){
+  const logg = S.styrke || [], idag = osloDate(), t = styrkeTall(logg, idag);
+  const iDag = logg.find(x => x.date === idag);
+  const navn = [...new Set(logg.flatMap(x => (x.sett || []).map(s2 => s2.ovelse)).filter(Boolean))];
+  const grupper = Object.keys({...t.grupper, ...t.forrige}).sort();
+  return `<div class="stack">
+  <form id="settform" class="panel stack"><h2>Logg et sett</h2>
+    <label class="lbl" for="st-ov">Øvelse<input id="st-ov" class="txt" list="st-navn" placeholder="F.eks. Knebøy" maxlength="60" value="${esc(S.stSist || "")}"><datalist id="st-navn">${navn.map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist></label>
+    <div class="row">
+      <label class="lbl" for="st-kg" style="flex:1;min-width:90px">Kg<input id="st-kg" class="txt" type="number" step="0.5" min="0" inputmode="decimal"></label>
+      <label class="lbl" for="st-reps" style="flex:1;min-width:90px">Reps<input id="st-reps" class="txt" type="number" min="1" max="60" inputmode="numeric"></label>
+      <label class="lbl" for="st-rir" style="flex:1;min-width:90px">RIR<input id="st-rir" class="txt" type="number" min="0" max="10" inputmode="numeric"></label>
+    </div>
+    <div><button class="btn primary">Legg til sett</button></div>
+    <p class="muted" style="font-size:13px">RIR er repetisjoner igjen i tanken. 0 til 5 teller som hardt sett.</p></form>
+  <div class="tiles">
+    <div class="tile static"><span class="big tnum">${t.uke_hard}</span><span class="lab">harde sett denne uka</span></div>
+    <div class="tile static"><span class="big tnum ${tone(t.uke_hard - t.forrige_hard)}">${sgn(t.uke_hard - t.forrige_hard)}</span><span class="lab">mot forrige uke</span></div>
+    <div class="tile static"><span class="big tnum">${t.okter}</span><span class="lab">økter denne uka</span></div>
+    <div class="tile static"><span class="big tnum">${t.uke_lette}</span><span class="lab">sett med RIR over 5</span></div>
+  </div>
+  ${iDag ? `<div class="panel stack"><div class="spread"><h2>I dag</h2><span class="muted tnum" style="font-size:13px">${(iDag.sett || []).length} sett</span></div>
+    <div class="notes">${(iDag.sett || []).map((x, i) => `<div class="lrow"><div class="lco"><b>${esc(x.ovelse)}</b><span class="muted">${esc(muskel(x.ovelse))}${x.tid ? " · " + esc(String(x.tid).slice(11, 16)) : ""}</span></div>
+      <div class="lt"><span class="tnum">${x.kg ?? "–"} kg × ${x.reps ?? "–"}${x.rir !== null && x.rir !== undefined ? " @ RIR " + x.rir : ""}</span>
+        <button class="x" data-settdel="${i}" aria-label="Fjern settet">×</button></div></div>`).join("")}</div></div>` : ""}
+  ${grupper.length ? `<div class="panel stack"><h2>Harde sett per muskelgruppe</h2><div class="notes">${grupper.map(g => {
+      const n = t.grupper[g] || 0, f = t.forrige[g] || 0;
+      return `<div class="lrow"><div class="lco"><b>${esc(g)}</b><span class="muted">forrige uke ${f}</span>
+        <div class="progress" style="margin-top:6px"><i style="width:${Math.min(100, n * 100 / 20).toFixed(0)}%"></i></div></div>
+        <div class="lt"><span class="tnum">${n}</span></div></div>`; }).join("")}</div>
+    <p class="muted" style="font-size:13px">Søylen er mot 20 sett i uka som referanse, ikke et mål. Øvelser appen ikke kjenner havner under Annet.</p></div>` : ""}
+  ${t.topp.length ? `<div class="panel stack"><h2>Estimert 1RM</h2><div class="notes">${t.topp.slice(0, 8).map(x => `<div class="lrow">
+      <div class="lco"><b>${esc(x.ovelse)}</b><span class="muted">${esc(x.dato)} · ${x.n} målinger</span></div>
+      <div class="lt"><span class="tnum">${x.siste} ± ${E1RM_SEP} kg</span>
+        <div class="muted tnum" style="font-size:13px">${x.tolkbar ? sgn(x.endring) + " kg siden " + esc(x.fra_dato) : "endring under 5 kg, ikke tolkbar"}</div></div></div>`).join("")}</div>
+    <p class="muted" style="font-size:13px">Regnet med Epley fra sett på ${E1RM_MAKS_REPS} repetisjoner eller mindre. Prediksjonsfeilen er rundt ${E1RM_SEP} kg, så små endringer er støy.</p></div>` : ""}
+  ${t.snittRir.length ? `<div class="panel stack"><h2>Snitt RIR siste fire uker</h2><div class="notes">${t.snittRir.slice(0, 10).map(x => `<div class="lrow"><div class="lco"><b>${esc(x.ovelse)}</b><span class="muted">${x.n} sett</span></div><div class="lt"><span class="tnum">${x.rir}</span></div></div>`).join("")}</div>
+    <p class="muted" style="font-size:13px">Robinson et al. 2024: 0 til 5 RIR for vekst, 3 til 5 med tyngre last for styrke.</p></div>` : ""}
+  ${!logg.length ? `<div class="empty"><b>Ingen sett logget ennå.</b><br>Logg ett sett av gangen. Panelet trenger ikke mer enn øvelse, kg, reps og RIR.</div>` : ""}</div>`;
+}
+/* ---------- Short, nordiske meldinger og marked ---------- */
+function shortRad(d){
+  // Null i registeret betyr under terskelen paa 0,5 prosent, ikke ingen short.
+  // Fritatte utstedere maa ikke se ut som om de har null short.
+  const niva = d.fritatt ? "fritatt" : d.under_terskel ? "under 0,5 %" : (d.pct).toFixed(2) + " %";
+  const e = d.endring === null || d.endring === undefined ? "" : (d.endring > 0 ? "+" : "") + d.endring.toFixed(2) + " pp";
+  return `<div class="lrow"><div class="lco"><b>${esc(d.utsteder || d.isin)}</b><span class="muted">${esc(d.isin)}${d.holdere ? " · " + d.holdere + (d.holdere === 1 ? " holder" : " holdere") : ""}</span></div>
+    <div class="lt"><span class="tnum">${esc(niva)}</span>${e ? `<div class="muted tnum ${d.endring > 0 ? "neg" : "pos"}" style="font-size:13px">${esc(e)}</div>` : ""}</div></div>`;
+}
+function vShort(){
+  const d = (S.short || [])[0];
+  if (!d) return `<div class="empty"><b>Ingen shortdata ennå.</b><br>Hentes fra Finanstilsynets register hver virkedag etter 15:30.</div>`;
+  const mine = d.mine || [], opp = d.opp || [], ned = d.ned || [];
+  return `<div class="stack">
+    <div class="panel stack"><div class="spread"><h2>Dine selskaper</h2><span class="muted tnum" style="font-size:13px">register ${esc(d.date)}${d.sammenlignet_med ? " mot " + esc(d.sammenlignet_med) : ""}</span></div>
+      ${mine.length ? `<div class="notes">${mine.map(shortRad).join("")}</div>` : `<p class="muted">Ingen av selskapene dine står i registeret. Terskelen er 0,5 prosent, så det betyr ikke at ingen shorter dem.</p>`}</div>
+    ${opp.length ? `<div class="panel stack"><h2>Økte mest</h2><div class="notes">${opp.map(shortRad).join("")}</div></div>` : ""}
+    ${ned.length ? `<div class="panel stack"><h2>Falt mest</h2><div class="notes">${ned.map(shortRad).join("")}</div></div>` : ""}
+    <div class="panel stack"><h2>Størst short</h2><div class="notes">${(d.storste || []).map(shortRad).join("")}</div>
+      <p class="muted" style="font-size:13px">${esc(d.note || "")} Kilde: ${esc(d.kilde || "")}.</p></div></div>`;
+}
+function vNasdaq(){
+  const liste = (S.nasdaq || []).flatMap(d => (d.mine || []).map(m => ({...m, dag: d.date})));
+  if (!liste.length) return "";
+  return `<div class="panel stack"><div class="spread"><h2>Nordiske børsmeldinger</h2><span class="muted" style="font-size:13px">Nasdaq, inkludert First North</span></div>
+    <div class="rlist">${liste.slice(0, 15).map(m => `<a class="ritem" href="${esc(m.url || "#")}" target="_blank" rel="noopener"><span class="t">${esc(m.selskap)}: ${esc(m.tittel)}</span><span class="s">${esc(m.dato || m.dag || "")}</span></a>`).join("")}</div>
+    <p class="muted" style="font-size:13px">Treffene er funnet ved navnematching, så listen kan være ufullstendig. Oslo Børs NewsWeb har ingen gratis feed, så de meldingene kommer fra MFN som før.</p></div>`;
+}
+function vMarked(){
+  const k = S.kontekst, m = k?.makro, u = (S.uran || []).slice().sort((a, b) => String(b.maaned).localeCompare(String(a.maaned)));
+  const siste = u[0], forrige = u[1];
+  return `<div class="stack">
+    <div class="panel stack"><div class="spread"><h2>Uran</h2><span class="muted" style="font-size:13px">per månedsslutt</span></div>
+      ${siste ? `<div class="tiles">
+        <div class="tile static"><span class="big tnum">${siste.spot ?? "–"}</span><span class="lab">spot, ${esc(siste.maaned)}</span></div>
+        <div class="tile static"><span class="big tnum">${siste.langtid ?? "–"}</span><span class="lab">langtidspris</span></div>
+        <div class="tile static"><span class="big tnum ${tone(siste.spread_langtid_minus_spot)}">${siste.spread_langtid_minus_spot ?? "–"}</span><span class="lab">langtid minus spot</span></div>
+        <div class="tile static"><span class="big tnum ${forrige && siste.spot && forrige.spot ? tone(siste.spot - forrige.spot) : ""}">${forrige && siste.spot && forrige.spot ? sgn(Number((siste.spot - forrige.spot).toFixed(2))) : "–"}</span><span class="lab">mot forrige måned</span></div>
+      </div><p class="muted" style="font-size:13px">${esc(siste.note || "")} Kilde: ${esc(siste.kilde || "Cameco")}. Dette er ikke live.</p>` :
+      `<p class="muted">Ingen uranpriser ennå. Hentes månedlig fra Cameco.</p>`}</div>
+    <div class="panel stack"><div class="spread"><h2>Makro</h2><span class="muted" style="font-size:13px">${m?.status === "ok" ? "hver verdi med egen dato" : ""}</span></div>
+      ${m?.status === "ok" ? `<div class="notes">${(m.serier || []).map(x => `<div class="lrow"><div class="lco"><b>${esc(x.navn)}</b><span class="muted">${esc(x.id)} · ${esc(x.as_of)}${x.takt ? " · " + esc(x.takt) : ""}</span></div>
+          <div class="lt"><span class="tnum">${x.verdi}</span>${x.endring !== null && x.endring !== undefined ? `<div class="muted tnum" style="font-size:13px">${sgn(x.endring)}</div>` : ""}</div></div>`).join("")}</div>
+        ${(m.utelatt || []).length ? `<p class="muted" style="font-size:13px">Utelatt: ${(m.utelatt || []).map(x => esc(x.id) + " (" + esc(x.grunn) + ")").join(", ")}.</p>` : ""}
+        <p class="muted" style="font-size:13px">${esc(m.attribusjon || "")}</p>` :
+      `<p class="muted">${esc(m?.note || "Makrotallene er ikke satt opp ennå. De krever en gratis FRED-nøkkel i repoet.")}</p>`}</div></div>`;
 }
 function vMa36(){
   const doc = S.ma36;
@@ -1188,15 +1556,87 @@ function cardFace(deck, cid, back){
     ${type === "flag" && c.fs ? `<div class="info">Lett å forveksle med: ${esc(c.fs)}</div>` : ""}</div>`;
 }
 function ivlLabel(d){ return d < 1 ? "nå" : d < 30 ? Math.round(d) + " d" : d < 365 ? (d/30).toFixed(1).replace(".", ",") + " mnd" : (d/365).toFixed(1).replace(".", ",") + " år"; }
-function nextState(st, g){
-  // st: [forfall (dagnr), intervall, ease, repetisjoner, bom]; g: 1 igjen, 2 vanskelig, 3 bra, 4 lett
-  const today = dayNum(); let [due, ivl, ease, reps, lapses] = st || [today, 0, 2500, 0, 0];
-  if (g === 1) { lapses += st ? 1 : 0; ease = Math.max(1300, ease - 200); ivl = 0; }
-  else if (!st || ivl === 0) { ivl = g === 4 ? 4 : 1; if (g === 4) ease += 150; }
-  else if (g === 2) { ivl = Math.max(ivl + 1, Math.round(ivl * 1.2)); ease = Math.max(1300, ease - 150); }
-  else if (g === 3) { ivl = Math.max(ivl + 1, Math.round(ivl * ease / 1000)); }
-  else { ivl = Math.max(ivl + 2, Math.round(ivl * ease / 1000 * 1.3)); ease += 150; }
-  reps++; return [today + ivl, ivl, ease, reps, lapses];
+/* ---------- FSRS-6 ----------
+   Planleggingen foelger FSRS-6 med standardparametrene fra py-fsrs, i
+   dagsoppløsning og uten laeringssteg, siden repetisjonen her er en gang per dag.
+   Benchmarken paa 10 000 Anki-samlinger og 350 millioner anmeldelser gir FSRS-6
+   bedre log loss enn SM-2 i 99,6 prosent av samlingene. Merk at benchmarken
+   vedlikeholdes av en kjernebidragsyter til FSRS, saa den er ikke uavhengig.
+
+   Tilstanden er [forfall, intervall, ease, repetisjoner, bom, stabilitet,
+   vanskelighet, sist repetert]. De fem foerste er som foer, saa gamle kort
+   fungerer uendret. Kort uten FSRS-tilstand saas fra intervallet og ease de
+   alt har, slik at modne kort beholder modenheten sin. Ankis manual advarer mot
+   aa reschedulere alt ved overgang, fordi mange kort da forfaller samtidig, og
+   her flyttes ingen forfallsdato: overgangen skjer ved neste repetisjon. */
+const FSRS_W = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666,
+                0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542];
+const FSRS_RET = 0.9, FSRS_MAKS = 36500;
+const fsrsDecay = () => -FSRS_W[20];
+const fsrsFactor = () => Math.pow(0.9, 1 / fsrsDecay()) - 1;
+const klemS = x => Math.max(0.001, x);
+const klemD = x => Math.min(10, Math.max(1, x));
+function fsrsIvl(S){
+  const i = Math.round((S / fsrsFactor()) * (Math.pow(FSRS_RET, 1 / fsrsDecay()) - 1));
+  return Math.min(FSRS_MAKS, Math.max(1, i));
+}
+function nextState(st, g, idag){
+  // g: 1 igjen, 2 vanskelig, 3 bra, 4 lett
+  const today = idag === undefined ? dayNum() : idag;
+  let [due, ivl, ease, reps, lapses, St, Dt, sist] = st || [today, 0, 2500, 0, 0, null, null, null];
+  const w = FSRS_W;
+  if (St === null || St === undefined) {
+    if (!st || !ivl) {           // helt nytt kort
+      St = klemS(w[g - 1]); Dt = klemD(w[4] - Math.exp(w[5] * (g - 1)) + 1);
+      reps++; const i = fsrsIvl(St);
+      return [g === 1 ? today : today + i, i, ease, reps, lapses + (g === 1 && st ? 1 : 0), St, Dt, today];
+    }
+    // saaing fra SM-2: intervallet er omtrent stabiliteten ved 90 prosent, og
+    // ease oversettes til vanskelighet paa skalaen 1 til 10.
+    St = klemS(ivl); Dt = klemD(10 - ((ease - 1300) / 1700) * 9);
+    sist = sist === null || sist === undefined ? today - Math.max(0, ivl - (due - today)) : sist;
+  }
+  const gaatt = Math.max(0, today - (sist === null || sist === undefined ? today - ivl : sist));
+  const R = Math.pow(1 + fsrsFactor() * gaatt / St, fsrsDecay());
+  // Stabiliteten regnes med den gamle vanskeligheten, slik py-fsrs gjoer.
+  let Sny;
+  if (gaatt < 1 && st && sist !== null && sist !== undefined) {
+    // Samme dag som forrige repetisjon: kort stabilitetsformel, ikke den vanlige.
+    let okning = Math.exp(w[17] * (g - 3 + w[18])) * Math.pow(St, -w[19]);
+    if (g > 1) okning = Math.max(okning, 1);
+    Sny = klemS(St * okning);
+    if (g === 1) lapses++;
+  } else if (g === 1) {
+    const lang = w[11] * Math.pow(Dt, -w[12]) * (Math.pow(St + 1, w[13]) - 1) * Math.exp((1 - R) * w[14]);
+    Sny = Math.min(lang, St / Math.exp(w[17] * w[18]));
+    lapses++;
+  } else {
+    const hard = g === 2 ? w[15] : 1, lett = g === 4 ? w[16] : 1;
+    Sny = St * (1 + Math.exp(w[8]) * (11 - Dt) * Math.pow(St, -w[9]) * (Math.exp((1 - R) * w[10]) - 1) * hard * lett);
+  }
+  Sny = klemS(Sny);
+  const d0lett = w[4] - Math.exp(w[5] * 3) + 1;
+  const demp = (10 - Dt) * (-(w[6] * (g - 3))) / 9;
+  const Dny = klemD(w[7] * d0lett + (1 - w[7]) * (Dt + demp));
+  const i = fsrsIvl(Sny);
+  reps++;
+  return [g === 1 ? today : today + i, i, ease, reps, lapses, Sny, Dny, today];
+}
+const RLOGG = {kø: [], timer: null};
+function rloggMaaned(){ return osloDate().slice(0, 7); }
+function rlogg(rad){
+  RLOGG.kø.push(rad);
+  clearTimeout(RLOGG.timer);
+  RLOGG.timer = setTimeout(async () => {
+    const rader = RLOGG.kø.splice(0), m = rloggMaaned();
+    if (!rader.length || !S.db) return;
+    try {
+      const d = S.rlog && S.rlog.maaned === m ? S.rlog : {maaned: m, rader: []};
+      const ny = {maaned: m, rader: [...(d.rader || []), ...rader], updated_at: new Date().toISOString()};
+      S.rlog = ny;
+      await S.db.doc("repetisjonslogg/" + m).set(ny);
+    } catch (err) { RLOGG.kø.unshift(...rader); }
+  }, 4000);
 }
 function streakDays(stats){ let n = 0, d = dayNum(); const has = k => (stats?.[k]?.n || 0) > 0; const ds = x => { const t = new Date(x * 864e5); return t.toISOString().slice(0,10); };
   if (!has(ds(d))) d--; while (has(ds(d))) { n++; d--; } return n; }
@@ -1439,6 +1879,74 @@ function sparkline(points, w = 520, h = 150){
     <text x="${w - 8}" y="${h - 3}" font-size="11" fill="var(--muted)" text-anchor="end" font-family="IBM Plex Mono, monospace">${esc(last.d)}</text>
     <text x="${w - 8}" y="${(Y(10000) - 4).toFixed(1)}" font-size="10" fill="var(--muted)" text-anchor="end" font-family="IBM Plex Mono, monospace">start $10 000</text></svg>`;
 }
+/* ---------- Risikobildet og stoerrelsesberegning ----------
+   Tallene kommer ferdig regnet fra tools/risiko.py. Her regnes bare kandidaten,
+   og med samme formler: 1,5 prosent per handel, 7,5 prosent samlet aapen risiko
+   og 100 prosent brutto eksponering. Ingen belaaning. */
+function storsteTillatte(r, inngang, stop){
+  const ek = Number(r?.egenkapital || 0);
+  if (!(ek > 0) || !(inngang > 0)) return {feil: "mangler egenkapital eller inngang"};
+  if (r.stoppet) return {antall: 0, binder: "dagsstopp eller månedsstopp er utløst"};
+  if (!(stop > 0) || stop >= inngang) return {antall: 0, binder: "stop må ligge under inngang"};
+  const tap = inngang - stop;
+  const brukt_risiko = (r.aapen_risiko_pct === null || r.aapen_risiko_pct === undefined) ? null : r.aapen_risiko_pct;
+  const per = {
+    per_handel: (1.5 / 100 * ek) / tap,
+    aapen_risiko: brukt_risiko === null ? Infinity : Math.max(0, (7.5 / 100 * ek) - (brukt_risiko / 100 * ek)) / tap,
+    eksponering: Math.max(0, (100 / 100 * ek) - ((r.eksponering_pct || 0) / 100 * ek)) / inngang,
+  };
+  const binder = Object.keys(per).reduce((a, b) => per[a] <= per[b] ? a : b);
+  const antall = Math.floor(Math.min(...Object.values(per)) + 1e-6);
+  return {antall, binder, per_grense: per, tap,
+          risiko_pct: Math.round(1e4 * antall * tap / ek) / 100,
+          verdi: Math.round(100 * antall * inngang) / 100,
+          ukjent_risiko: brukt_risiko === null};
+}
+function maaler(navn, verdi, tak, enhet){
+  if (verdi === null || verdi === undefined) return `<div class="lrow"><div class="lco"><b>${esc(navn)}</b><span class="muted">ukjent</span></div><div class="lt">–</div></div>`;
+  const andel = Math.max(0, Math.min(100, 100 * verdi / tak));
+  const over = verdi > tak;
+  return `<div class="lrow"><div class="lco"><b>${esc(navn)}</b><span class="muted">tak ${tak}${esc(enhet || " %")}</span>
+      <div class="progress" style="margin-top:6px"><i style="width:${andel.toFixed(0)}%${over ? ";background:var(--neg,#c0392b)" : ""}"></i></div></div>
+    <div class="lt"><span class="tnum ${over ? "neg" : ""}">${verdi.toFixed(2)}${esc(enhet || " %")}</span></div></div>`;
+}
+function vRisiko(){
+  const r = S.risiko;
+  if (!r) return "";
+  const p = S.pre || {};
+  return `<div class="panel stack"><div class="spread"><h2>Risiko mot reglene dine</h2>
+      <span class="pill ${r.brudd?.length ? "warn" : "ok"}">${r.brudd?.length ? r.brudd.length + " brudd" : "innenfor"}</span></div>
+    ${r.kilde_merknad ? `<div class="notice">${esc(r.kilde_merknad)}</div>` : ""}
+    <div class="notes">
+      ${maaler("Brutto eksponering", r.eksponering_pct, 100)}
+      ${maaler("Samlet åpen risiko", r.aapen_risiko_pct, 7.5)}
+      ${maaler("Risiko ved inngang", r.risiko_ved_inngang_pct, 7.5)}
+      <div class="lrow"><div class="lco"><b>Margin til dagsstopp</b><span class="muted">stopper på -5 %</span></div><div class="lt"><span class="tnum">${r.margin_til_dagsstopp ?? "–"} pp</span></div></div>
+      <div class="lrow"><div class="lco"><b>Margin til månedsstopp</b><span class="muted">stopper på -12 %</span></div><div class="lt"><span class="tnum">${r.margin_til_maanedsstopp ?? "–"} pp</span></div></div>
+      <div class="lrow"><div class="lco"><b>Konsentrasjon</b><span class="muted">største post og topp tre</span></div><div class="lt"><span class="tnum">${r.storste_vekt_pct ?? 0} % / ${r.topp3_vekt_pct ?? 0} %</span></div></div>
+    </div>
+    ${r.brudd?.length ? `<div class="notice">${r.brudd.map(esc).join("<br>")}</div>` : ""}
+    <details${(p.inngang > 0 || p.stop > 0) ? " open" : ""}><summary class="muted" style="cursor:pointer;font-size:14px">Hvor stor kan neste posisjon være</summary>
+      <div class="row" style="margin-top:10px">
+        <label class="lbl" for="pre-inn" style="flex:1;min-width:110px">Inngang<input id="pre-inn" class="txt" type="number" step="0.01" min="0" value="${p.inngang ?? ""}" inputmode="decimal"></label>
+        <label class="lbl" for="pre-stop" style="flex:1;min-width:110px">Stop<input id="pre-stop" class="txt" type="number" step="0.01" min="0" value="${p.stop ?? ""}" inputmode="decimal"></label>
+      </div>
+      <div id="pre-ut">${preUt(r, p)}</div>
+    </details>
+    <p class="muted" style="font-size:13px">Regnet av tools/risiko.py fra ${esc(r.kilde || "ukjent kilde")}${r.kilde_generated_at ? " (" + esc(String(r.kilde_generated_at).slice(0, 16).replace("T", " ")) + ")" : ""}. Aritmetikk, ikke råd.</p></div>`;
+}
+function preUt(r, p){
+  const s = (p?.inngang > 0 && p?.stop > 0) ? storsteTillatte(r, Number(p.inngang), Number(p.stop)) : null;
+  const navn = {per_handel: "risiko per handel (1,5 %)", aapen_risiko: "samlet åpen risiko (7,5 %)", eksponering: "brutto eksponering (100 %)"};
+  if (!s) return `<p class="muted" style="font-size:13px">Skriv inn inngang og stop. Da regnes største antall som holder seg innenfor alle tre grensene, og hvilken som binder først.</p>`;
+  if (s.feil) return `<p class="muted">${esc(s.feil)}</p>`;
+  return `<div class="stack" style="gap:6px;margin-top:8px">
+        <div class="tiles"><div class="tile static"><span class="big tnum">${s.antall}</span><span class="lab">aksjer</span></div>
+          <div class="tile static"><span class="big tnum">${s.risiko_pct ?? "–"}<small> %</small></span><span class="lab">risiko av egenkapital</span></div>
+          <div class="tile static"><span class="big tnum">${usd(s.verdi)}</span><span class="lab">posisjonsverdi</span></div></div>
+        <p class="muted" style="font-size:13px">Grensen som binder først er ${esc(navn[s.binder] || s.binder)}.${s.antall ? " Per grense: " + Object.keys(s.per_grense).map(k => esc(navn[k] || k) + " " + (isFinite(s.per_grense[k]) ? Math.floor(s.per_grense[k]) : "ukjent")).join(", ") + "." : ""}${s.ukjent_risiko ? " Åpen risiko er ukjent i denne kilden, så grensen på 7,5 prosent kan ikke sjekkes nå." : ""}</p>
+      </div>`;
+}
 function vTrading(){
   const T = S.trading;
   if (!S.db) return `<div class="empty"><b>Lagring er ikke tilgjengelig i denne visningen.</b></div>`;
@@ -1457,6 +1965,7 @@ function vTrading(){
     <div class="tile static"><span class="big tnum ${tone(st.expectancy_r)}">${st.expectancy_r === null || st.expectancy_r === undefined ? "–" : sgn(st.expectancy_r, " R")}</span><span class="lab">forventning per handel</span></div>
   </div>
   ${st.n !== undefined && !st.conclusive ? `<div class="notice">${esc(st.note || "")}</div>` : ""}
+  ${vRisiko()}
   <div class="panel stack"><div class="spread"><h2>Åpne posisjoner</h2><span class="muted tnum" style="font-size:13px">${pos.length} åpne · urealisert ${usd(openPnl)} · risiko til stopp ${usd(openRisk)}</span></div>
     ${pos.length ? pos.map(p => `<div class="posrow">
       <div class="pos-h"><b class="sym">${esc(p.symbol)}</b><span class="muted tnum">${esc(p.qty)} aksjer · inn ${usd(p.avg)}${p.opened ? " · " + esc(p.opened) : ""}</span><span class="tnum ${tone(p.pnl)}" style="margin-left:auto;font-weight:700">${usd(p.pnl)} <small>(${sgn(p.pct, " %")})</small></span></div>
@@ -1523,6 +2032,91 @@ async function kortFerdig(id){
   n.updated_at = new Date().toISOString();
   const {id: nid, ...d} = n;
   try { await S.db.doc("notater/" + nid).set(d); } catch (e) { toast("Fikk ikke lagret at forslagene er brukt."); }
+}
+/* Arkivering: svarene lagres paa debriefen OG skrives som notat. Notatet er
+   poenget, ikke en kopi: nedskrivingen er det som flytter effekten opp fra
+   d+ = 0,19 til 0,43 i Harkins tabell. Ingenting slettes, og uka laases etterpaa
+   slik at en arkivert debrief er et dokument og ikke et skjema som kan endres i
+   ettertid. */
+async function lagreAnnotasjon(){
+  const dato = ($("#a-dato")?.value || osloDate()), type = $("#a-type")?.value || "annet";
+  const tekst = ($("#a-tekst")?.value || "").trim();
+  if (tekst.length < 3) { toast("Skriv hva du endret"); return; }
+  const id = "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  try {
+    await S.db.doc("annotasjon/" + id).set({id, dato, type, tekst, created_at: new Date().toISOString()});
+    const el = $("#a-tekst"); if (el) el.value = "";
+    toast("Endringen er lagret");
+  } catch (err) { toast("Fikk ikke lagret endringen"); }
+}
+async function startForsok(){
+  const tittel = ($("#nf-tittel")?.value || "").trim();
+  const a_navn = ($("#nf-a")?.value || "").trim() || "Som vanlig";
+  const b_navn = ($("#nf-b")?.value || "").trim();
+  const effekt = ($("#nf-effekt")?.value || "").trim();
+  const enhet = ($("#nf-enhet")?.value || "").trim();
+  const dager = Math.max(14, Math.min(28, Number($("#nf-dager")?.value) || 21));
+  const start = $("#nf-start")?.value || osloDate();
+  if (!tittel || !b_navn || !effekt) { toast("Tittel, betingelse B og effekt må fylles ut"); return; }
+  const froe = (Date.now() ^ Math.floor(Math.random() * 2 ** 31)) >>> 0;
+  const tildeling = froeRekke(froe, dager);
+  const slutt = new Date(Date.parse(start) + (dager - 1) * 86400000).toISOString().slice(0, 10);
+  const id = "e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const e = {id, tittel, a_navn, b_navn, effekt, enhet, start, slutt, dager,
+    froe, tildeling, logg: [], status: "aktiv", created_at: new Date().toISOString()};
+  try {
+    await S.db.doc("eksperiment/" + id).set(e);
+    S.fValgt = id; S.fNy = false; toast("Forsøket er startet. Tildelingen er låst."); render();
+  } catch (err) { toast("Fikk ikke startet forsøket"); }
+}
+async function lagreForsokDag(){
+  const liste = (S.forsok || []).slice().sort((a, b) => String(b.start).localeCompare(String(a.start)));
+  const e = liste.find(x => x.id === S.fValgt) || liste[0];
+  if (!e) return;
+  const idag = osloDate();
+  const idx = Math.floor((Date.parse(idag) - Date.parse(e.start)) / 86400000);
+  if (idx < 0 || idx >= (e.tildeling || []).length) { toast("Dagen er utenfor perioden"); return; }
+  const raa = ($("#f-verdi")?.value || "").trim();
+  if (raa === "") { toast("Skriv inn dagens tall"); return; }
+  const verdi = Number(raa);
+  if (!isFinite(verdi)) { toast("Tallet må være et tall"); return; }
+  const fulgt = $("#f-fulgt")?.value || e.tildeling[idx];
+  const logg = (e.logg || []).filter(r => r.dato !== idag);
+  logg.push({dato: idag, betingelse: e.tildeling[idx], fulgt, verdi});
+  logg.sort((a, b) => String(a.dato).localeCompare(String(b.dato)));
+  try {
+    await S.db.doc("eksperiment/" + e.id).set({...e, logg, updated_at: new Date().toISOString()});
+    toast("Dagen er lagret");
+  } catch (err) { toast("Fikk ikke lagret dagen"); }
+}
+async function arkiverUke(){
+  const d = ukeValgt(); if (!d || !S.db) return;
+  const svar = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar.svar : (d.svar || {});
+  if ((d.hendelser || []).length < (d.krav_hendelser || 3)) { toast("For få navngitte hendelser til å arkivere"); return; }
+  if (!Object.values(svar).some(v => String(v || "").trim().length > 2)) { toast("Svar på minst ett spørsmål først"); return; }
+  const b = $("#ukearkiv"); if (b) { b.disabled = true; b.textContent = "Arkiverer…"; }
+  try {
+    const mappe = await ensurePage("Ukesdebrief", await sysPage("ukesdebrief", "Ukesdebrief", {order: 5, blocks: [{id: bid(), t: "p", text: "Ukesdebriefene, arkivert. Skrives av Uke-fanen."}]}));
+    const blokker = [
+      {id: bid(), t: "p", text: "Uke " + d.uke + ", " + d.fra + " til " + d.til + ". Arkivert " + osloDate() + "."},
+      {id: bid(), t: "h2", text: "Svar"},
+      ...(d.sporsmaal || []).flatMap(q => [{id: bid(), t: "h3", text: q.q},
+        {id: bid(), t: "p", text: String(svar[q.id] || "").trim() || "Ikke besvart"}]),
+      {id: bid(), t: "h2", text: "Hendelser fra uka"},
+      ...(d.hendelser || []).map(h => ({id: bid(), t: "ul", text: h.kilde + " " + (h.dato || "") + ": " + h.tekst + " (" + h.ref + ")"})),
+    ];
+    const nid2 = await createNote({title: "Ukesdebrief " + d.uke, parent: mappe, blocks: blokker,
+      src: {kind: "debrief", uke: d.uke, status: "ferdig", date: osloDate()}});
+    await addLink(mappe, nid2);
+    const ny = {...d, svar, status: "ferdig", arkivert_notat: nid2, arkivert: osloDate()};
+    await S.db.doc("debrief/" + d.uke).set(ny);
+    S.ukeSvar = null;
+    toast("Uka er arkivert som notat");
+    render();
+  } catch (err) {
+    toast("Fikk ikke arkivert: " + (err?.message || err?.code || "ukjent feil"));
+    const b2 = $("#ukearkiv"); if (b2) { b2.disabled = false; b2.textContent = "Arkiver uka"; }
+  }
 }
 async function generateCards(){
   const g = S.gen; g.text = $("#gen-text").value.trim(); g.source = $("#gen-src").value.trim(); g.n = Math.max(3, Math.min(30, Number($("#gen-n").value) || 10)); g.style = $("#gen-style").value;
@@ -2346,6 +2940,19 @@ document.addEventListener("click", async e => {
   const gb = t.closest("[data-g]"); if (gb) { gradeCard(Number(gb.dataset.g)); return; }
   const tp = t.closest("[data-tp]"); if (tp) { await answerTp(Number(tp.dataset.tp), Number(tp.dataset.k)); return; }
   // gitar
+  const us = t.closest("[data-ukesub]"); if (us) { S.ukeSub = us.dataset.ukesub; store.set("mp.ukesub", S.ukeSub); S.fNy = false; render(); return true; }
+  const fv = t.closest("[data-forsok]"); if (fv) { S.fValgt = fv.dataset.forsok; S.fNy = false; render(); return true; }
+  if (t.id === "f-nytt") { S.fNy = true; render(); return true; }
+  if (t.id === "f-avbryt") { S.fNy = false; render(); return true; }
+  const uv = t.closest("[data-uke]"); if (uv) { S.ukeValgt = uv.dataset.uke; S.ukeSvar = null; render(); return true; }
+  if (t.id === "ukearkiv") { await arkiverUke(); return true; }
+  const hs = t.closest("[data-hsub]"); if (hs) { S.hSub = hs.dataset.hsub; store.set("mp.hsub", S.hSub); render(); return true; }
+  const sd = t.closest("[data-settdel]");
+  if (sd) { const i = Number(sd.dataset.settdel), dag = osloDate(), d = (S.styrke || []).find(x => x.date === dag);
+    if (!d || !S.db) return true;
+    const sett = (d.sett || []).filter((_, k) => k !== i);
+    try { await S.db.doc("styrke/" + dag).set({...d, sett, updated_at: new Date().toISOString()}); toast("Settet er fjernet"); }
+    catch (err) { toast(writeErr(err)); } return true; }
   const fs = t.closest("[data-fsub]"); if (fs) { S.finSub = fs.dataset.fsub; store.set("mp.fsub", S.finSub); render(); return; }
   const msb = t.closest("[data-masort]"); if (msb) { const k = msb.dataset.masort; S.maSort = S.maSort.k === k ? {k, dir: -S.maSort.dir} : {k, dir: -1}; store.set("mp.masort", JSON.stringify(S.maSort)); render(); return; }
   const mo = t.closest("[data-maopen]"); if (mo) { S.maOpen = S.maOpen === mo.dataset.maopen ? null : mo.dataset.maopen; render(); return; }
@@ -2378,8 +2985,15 @@ document.addEventListener("input", e => {
   if (e.target.id === "gsearch") { SQ.q = e.target.value; clearTimeout(SQ.t); SQ.t = setTimeout(() => { const r = $("#sres"); if (r) r.innerHTML = searchResults(); }, 180); }
   if (e.target.dataset?.imptitle !== undefined && IMP.plan) IMP.plan[e.target.dataset.imptitle].title = e.target.value;
   if (e.target.dataset?.impsub !== undefined && IMP.plan) IMP.plan[e.target.dataset.impsub].sub = e.target.value.trim();
+  if (e.target.dataset?.uq !== undefined) { const d = ukeValgt(); if (d) { const n = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar : {uke: d.uke, svar: {...(d.svar || {})}}; n.svar[e.target.dataset.uq] = e.target.value; S.ukeSvar = n; const b = $("#ukearkiv"); if (b) b.disabled = !Object.values(n.svar).some(v => String(v || "").trim().length > 2); } }
   if (e.target.dataset?.genq !== undefined) S.gen.preview[Number(e.target.dataset.genq)].q = e.target.value;
   if (e.target.dataset?.gena !== undefined) S.gen.preview[Number(e.target.dataset.gena)].a = e.target.value;
+  if (e.target.id === "pre-inn" || e.target.id === "pre-stop") {
+    // Bare resultatfeltet oppdateres, ellers mister feltet fokus for hvert tastetrykk.
+    S.pre = {...(S.pre || {}), [e.target.id === "pre-inn" ? "inngang" : "stop"]: e.target.value === "" ? null : Number(e.target.value)};
+    const ut = $("#pre-ut"); if (ut && S.risiko) ut.innerHTML = preUt(S.risiko, S.pre);
+    return;
+  }
   if (e.target.id === "gen-text") S.gen.text = e.target.value;
   if (e.target.id === "gen-src") S.gen.source = e.target.value;
   if (e.target.id === "g-bpm") e.target.dataset.touched = "1";
@@ -2406,6 +3020,9 @@ document.addEventListener("submit", async e => {
   if (f.id === "addtheme") { const v = $("#themein").value.trim(); if (!v) return; const th = (S.config?.health_themes || []).slice(); th.push({label: v}); await saveConfig({health_themes: th}); return; }
   if (f.id === "noteform") { const r = curRecipe(), txt = $("#notein").value.trim(); if (!r || !txt) return;
     const notes = (r.notes||[]).slice(); notes.push({date: osloDate(), verdict: S.verdict || "endring", text: txt}); await saveRecipe(r.id, {notes}, "Notat lagret"); return; }
+  if (f.id === "annotform") return lagreAnnotasjon();
+  if (f.id === "nyttforsok") return startForsok();
+  if (f.id === "forsokform") return lagreForsokDag();
   if (f.id === "recform") return addRecipe();
   if (f.id === "editform") { const r = curRecipe(); if (!r) return; const lines = id => $(id).value.split("\n").map(x => x.trim()).filter(Boolean);
     await saveRecipe(r.id, {title: $("#e-title").value.trim() || "Uten navn", url: $("#e-url").value.trim(), servings: $("#e-serv").value.trim(), time: $("#e-time").value.trim(), ingredients: lines("#e-ing"), steps: lines("#e-steps")}, "Endringer lagret"); S.recipeMode = "list"; render(); return; }
@@ -2417,6 +3034,17 @@ document.addEventListener("submit", async e => {
       if (!Object.values(set.types).some(Boolean)) { toast("Velg minst én korttype"); return; } }
     LD(deck).settings = set; S.showSettings = null; if (S.session?.deck === deck) S.session = null; markDirty(DECKS[deck].path, true); render(); toast("Innstillinger lagret"); return; }
   if (f.id === "manualcard") { const q = $("#mc-q").value.trim(), a = $("#mc-a").value.trim(); if (!q || !a) { toast("Fyll inn både spørsmål og svar"); return; } if (await saveCards([{q, a}], "Egne notater")) { $("#mc-q").value = ""; $("#mc-a").value = ""; } return; }
+  if (f.id === "settform") {
+    const ovelse = $("#st-ov").value.trim(), kg = Number($("#st-kg").value), reps = Number($("#st-reps").value);
+    const rirRaa = $("#st-rir").value.trim(), rir = rirRaa === "" ? null : Number(rirRaa);
+    if (!ovelse || !reps || !S.db) { toast("Fyll inn minst øvelse og reps"); return; }
+    const dag = osloDate(), d = (S.styrke || []).find(x => x.date === dag) || {date: dag, sett: []};
+    const sett = [...(d.sett || []), {ovelse, kg: kg || null, reps, rir, tid: new Date().toISOString()}];
+    S.stSist = ovelse;
+    try { await S.db.doc("styrke/" + dag).set({...d, date: dag, sett, updated_at: new Date().toISOString()});
+      $("#st-kg").value = ""; $("#st-reps").value = ""; toast("Sett lagret"); }
+    catch (err) { toast(writeErr(err)); }
+    return; }
   if (f.id === "gitemform") { const name = $("#gi-name").value.trim(); if (!name || !S.db) return; const target = Number($("#gi-target").value) || null;
     try { await S.db.doc("gitar-ovelser/i" + Date.now().toString(36)).set({name, target, created: osloDate()}); toast("Øvelse lagt til"); } catch (err) { toast(writeErr(err)); } return; }
   if (f.id === "glogform") { const item = $("#g-item").value; if (!item || !S.db) return;
@@ -2483,7 +3111,12 @@ async function answerTp(i, k){
 function gradeCard(g){
   const ses = S.session; if (!ses?.q.length || !ses.flipped) return;
   const d = LD(ses.deck), cid = ses.q.shift(), s = d.s || (d.s = {}), wasNew = !s[cid];
+  const forrige = s[cid];
   s[cid] = nextState(s[cid], g);
+  // Loggen er det eneste grunnlaget en senere optimalisering av FSRS-parametrene
+  // kan bygge paa. Den er kompakt: dagnummer, stokk, kort, karakter og dager
+  // siden forrige repetisjon.
+  rlogg({d: dayNum(), s: ses.deck, c: cid, g, e: forrige && forrige[7] !== null && forrige[7] !== undefined ? dayNum() - forrige[7] : null});
   const day = osloDate(), stats = d.stats || (d.stats = {}); const st = stats[day] || (stats[day] = {n:0, ok:0, new:0});
   st.n++; if (g > 1) st.ok++; if (wasNew) st.new++;
   if (g === 1) { ses.again++; ses.q.splice(Math.min(ses.q.length, 4), 0, cid); } else ses.done++;
@@ -2516,7 +3149,7 @@ function loadLearnDoc(path, key, def){
     .catch(() => { if (key === "G") S.G = def(); else S.L[key] = def(); S.Lloaded[key] = true; render(); });
 }
 async function boot(){
-  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
+  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
   go(VIEWS.includes(h) ? h : (store.get("mp.view") || "idag"));
   loadGeo(); loadHist();
   const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
@@ -2533,6 +3166,18 @@ async function boot(){
   db.collection("gitar-ovelser").onSnapshot(snap => { S.gItems = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(a.name).localeCompare(String(b.name), "nb")); if (S.view === "gitar" && S.gSub === "log") render(); }, () => {});
   db.collection("gitar-logg").onSnapshot(snap => { S.gLog = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(b.created_at||b.date).localeCompare(String(a.created_at||a.date))); if (S.view === "gitar" && S.gSub === "log") render(); }, () => {});
   db.collection("ma36").orderBy("date", "desc").limit(1).onSnapshot(snap => { const d = snap.docs[0]; S.ma36 = d ? thaw(d) : null; if (S.view === "finans" && S.finSub === "ma36") render(); }, () => {});
+  db.doc("repetisjonslogg/" + rloggMaaned()).onSnapshot(s2 => { if (s2.exists) S.rlog = thaw(s2); }, () => {});
+  db.collection("styrke").orderBy("date", "desc").limit(200).onSnapshot(snap => { S.styrke = snap.docs.map(d => thaw(d)); if (S.view === "helse" && S.hSub === "styrke") render(); }, () => {});
+  db.collection("annotasjon").orderBy("dato", "desc").limit(120).onSnapshot(snap => { S.annot = snap.docs.map(d => thaw(d)); if (S.view === "uke" && S.ukeSub === "endringer") render(); }, () => {});
+  db.collection("eksperiment").orderBy("start", "desc").limit(20).onSnapshot(snap => { S.forsok = snap.docs.map(d => thaw(d)); if (S.view === "uke" && S.ukeSub === "forsok") render(); }, () => {});
+  db.collection("debrief").orderBy("uke", "desc").limit(26).onSnapshot(snap => { S.debriefer = snap.docs.map(d => thaw(d)); const n = $("#n-uke"); const venter = S.debriefer.filter(x => x.status !== "ferdig" && (x.hendelser || []).length >= (x.krav_hendelser || 3)).length; if (n) n.textContent = venter || ""; if (S.view === "uke") render(); }, () => {});
+  db.doc("helse/sri").onSnapshot(s2 => { S.sri = s2.exists ? thaw(s2) : null; if (S.view === "helse" && S.hSub === "sovn") render(); }, () => {});
+  db.collection("helse").orderBy("dag", "desc").limit(40).onSnapshot(snap => { S.sovn = snap.docs.map(d => thaw(d)).filter(d => d.vinduer); if (S.view === "helse" && S.hSub === "sovn") render(); }, () => {});
+  db.doc("trading/risiko").onSnapshot(s => { S.risiko = s.exists ? thaw(s) : null; if (S.view === "trading") render(); }, () => {});
+  db.collection("short").orderBy("date", "desc").limit(2).onSnapshot(snap => { S.short = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "short") render(); }, () => {});
+  db.collection("nasdaq").orderBy("date", "desc").limit(5).onSnapshot(snap => { S.nasdaq = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "news") render(); }, () => {});
+  db.collection("kontekst").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kontekst = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "finans" && S.finSub === "marked") render(); }, () => {});
+  db.collection("uran").orderBy("maaned", "desc").limit(24).onSnapshot(snap => { S.uran = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "marked") render(); }, () => {});
   db.doc("trading/status").onSnapshot(s => { S.trading = s.exists ? thaw(s) : null; const n = $("#n-trading"); if (n) n.textContent = S.trading?.positions?.length || ""; if (S.view === "trading" || S.view === "idag") render(); }, () => {});
   db.collection("kort-vg3").onSnapshot(snap => { S.vg3Cards = snap.docs.map(d => ({id: d.id, ...thaw(d)})); if (S.view === "laering" && S.learnSub === "vg3" && !S.session) render(); else renderHeader(); }, () => {});
   db.collection("kort").onSnapshot(snap => { S.ownCards = snap.docs.map(d => ({id: d.id, ...thaw(d)})); if (S.view === "laering" && !document.activeElement?.closest?.("#genpanel")) render(); else renderHeader(); }, () => {});
