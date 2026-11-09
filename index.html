@@ -411,6 +411,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       <button class="tab" role="tab" data-v="helse">Helse<span class="n" id="n-helse"></span></button>
       <button class="tab" role="tab" data-v="finans">Finans<span class="n" id="n-finans"></span></button>
       <button class="tab" role="tab" data-v="trading">Trading<span class="n" id="n-trading"></span></button>
+      <button class="tab" role="tab" data-v="marked">Marked<span class="n" id="n-marked"></span></button>
       <button class="tab" role="tab" data-v="nyheter">Nyheter<span class="n" id="n-nyheter"></span></button>
       <button class="tab" role="tab" data-v="kokk">Kokk<span class="n" id="n-kokk"></span></button>
       <button class="tab" role="tab" data-v="laering">Læring<span class="n" id="n-laering"></span></button>
@@ -837,7 +838,8 @@ const S = {
   L: {geo: null, hist: null}, Lloaded: {}, hist: null, learnSub: "geo", session: null, showSettings: null, tpDoc: {}, editThemes: false,
   hType: null, hTheme: null, trading: null, notes: [], ownCards: null, gen: {text:"", source:"", n:10, style:"fakta", preview:[], busy:false, status:""}, ownOpen: null,
   styrke: [], hSub: "studier", stSist: "", rlog: null, sri: null, sovn: [], debriefer: [], ukeSvar: null, ukeValgt: "",
-  ukeSub: "debrief", annot: [], forsok: [], fValgt: "", fNy: false,
+  ukeSub: "debrief", annot: [], forsok: [], fValgt: "", fNy: false, marked: null, mSub: "roadmap",
+  vapidPub: null, varselInns: null, varselSubs: [], varselBusy: false,
   G: {fb:{}, fbDays:{}, fbNat:true, ear:{ok:0, n:0}, earMode:"iv", earLevel:"lett", known:[]}, gSub: "fb", gItems: [], gLog: [], fb: null, ear: null, fbStreak: 0,
 };
 const TYPES = {RCT:{l:"RCT",c:"var(--accent)"}, Oversikt:{l:"Oversikter",c:"var(--fg)"}, Observasjon:{l:"Observasjon",c:"var(--muted)"}, Kasus:{l:"Kasus",c:"var(--line)"}, Annet:{l:"Annet",c:"var(--surface-2)"}};
@@ -849,7 +851,7 @@ const CARDTYPES = {flag:"Flagg → land", map:"Kart → land", cap:"Land → hov
 const feed = () => S.feeds[S.feedIdx] || null;
 
 /* ---------- navigasjon ---------- */
-const VIEWS = ["idag","helse","finans","trading","nyheter","kokk","laering","gitar","uke","notater","sok"];
+const VIEWS = ["idag","helse","finans","trading","marked","nyheter","kokk","laering","gitar","uke","notater","sok"];
 function go(v){ if (!VIEWS.includes(v)) v = "idag"; S.view = v; try { history.replaceState(null, "", "#" + v); } catch {} store.set("mp.view", v);
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === v)));
   if (v === "laering" && S.learnSub === "geo") loadMaps(); render(); window.scrollTo({top:0}); }
@@ -873,11 +875,95 @@ function renderHeader(){
 
 /* ---------- render ---------- */
 function render(){ renderHeader(); if (S.view === "notater" && (editorFocused() || (N.importing && document.activeElement?.closest?.(".imp") && document.activeElement.matches("input:not([type=file]),textarea,select")) || (N.capturing && document.activeElement?.closest?.(".cap") && document.activeElement.matches("input:not([type=file]),textarea,select")))) return; if (S.view === "sok" && document.activeElement?.id === "gsearch") { const r = $("#sres"); if (r) r.innerHTML = searchResults(); return; } const m = $("#main");
-  const fn = {idag:vToday, helse:vHealth, finans:vFinance, trading:vTrading, nyheter:vWorld, kokk:vKitchen, laering:vLearn, gitar:vGuitar, uke:vUke, notater:vNotes, sok:vSearch}[S.view];
+  const fn = {idag:vToday, helse:vHealth, finans:vFinance, trading:vTrading, marked:vMarked, nyheter:vWorld, kokk:vKitchen, laering:vLearn, gitar:vGuitar, uke:vUke, notater:vNotes, sok:vSearch}[S.view];
   m.innerHTML = `<section class="view">${fn()}</section>`; }
 
 function emptyFeed(what){ return `<div class="empty"><b>Ingen ${what} for denne dagen ennå.</b><br>Den daglige oppdateringen kjører hver morgen og fyller denne fanen. Første kjøring legges inn i dag.</div>`; }
 
+// Varsel paa telefon. Web push sendes av tools/varsel.js i GitHub Actions, saa
+// det avhenger ikke av PC-en. Her slaar du det paa, velger tider og tester.
+function urlB64ToUint8(base64){
+  const pad = "=".repeat((4 - base64.length % 4) % 4);
+  const s = (base64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(s); const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+function varselStoettet(){ return "Notification" in window && "serviceWorker" in navigator && "PushManager" in window; }
+function varselPanel(){
+  const inn = S.varselInns || {};
+  const pa = inn.pa !== false;
+  const perm = varselStoettet() ? Notification.permission : "unsupported";
+  const abonnert = (S.varselSubs || []).length > 0;
+  if (!varselStoettet()) return `<details class="panel"><summary class="eyebrow" style="cursor:pointer;list-style:revert">Varsel</summary>
+    <p class="muted" style="font-size:13px;margin-top:8px">Denne enheten eller nettleseren støtter ikke push. På iPhone må du først legge appen til på Hjem-skjermen, så virker varsler derfra.</p></details>`;
+  const seks = inn.seksjoner || {};
+  const bryter = (k, l) => `<label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-weight:400"><input type="checkbox" class="ncheck" data-vseks="${k}" ${seks[k] !== false ? "checked" : ""}><span>${l}</span></label>`;
+  return `<details class="panel"${abonnert ? "" : ""}><summary class="eyebrow" style="cursor:pointer;list-style:revert">Varsel ${abonnert && pa ? "· på" : ""}</summary>
+    <div class="stack" style="margin-top:10px">
+      <p class="muted" style="font-size:13px">Push morgen og kveld, sendt fra kjøringen i skyen. ${!S.vapidPub ? "<b>Mangler oppsett:</b> VAPID-nøklene er ikke lagt inn i repoet ennå." : ""}</p>
+      ${perm !== "granted" || !abonnert
+        ? `<div><button class="btn primary small" id="varselpa" ${!S.vapidPub || S.varselBusy ? "disabled" : ""}>${S.varselBusy ? "Kobler til…" : "Slå på varsel på denne enheten"}</button>
+           ${perm === "denied" ? `<p class="warn" style="font-size:13px">Varsler er blokkert i nettleserinnstillingene. Skru dem på der først.</p>` : ""}</div>`
+        : `<div class="row" style="align-items:center"><span class="pill ok">På på denne enheten</span><button class="btn small ghost" id="varseltest">Send en test</button><button class="btn small ghost" id="varselav2">Koble fra enheten</button></div>`}
+      <label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-weight:400"><input type="checkbox" class="ncheck" id="varselbryter" ${pa ? "checked" : ""}><span>Varsler er aktivert</span></label>
+      <div class="row">
+        <label class="lbl" for="vtmorgen" style="flex:1;min-width:120px">Morgen<input id="vtmorgen" class="txt" type="time" value="${esc(inn.morgen_tid || "07:00")}"></label>
+        <label class="lbl" for="vtkveld" style="flex:1;min-width:120px">Kveld<input id="vtkveld" class="txt" type="time" value="${esc(inn.kveld_tid || "21:00")}"></label>
+      </div>
+      <div class="stack" style="gap:4px"><span class="muted" style="font-size:13px">Hva varselet kan nevne</span>
+        ${bryter("helse", "Nye studier")}${bryter("trading", "Selskapssaker, risiko og logging")}${bryter("marked", "Markedspuls")}${bryter("uke", "Ukesdebrief")}</div>
+      <div><button class="btn small primary" id="varsellagre">Lagre innstillinger</button></div>
+      <p class="muted" style="font-size:12px">Tiden styrer når kjøringen sender. Du kan endre den når som helst. Hver enhet du vil ha varsel på må slås på for seg.</p>
+    </div></details>`;
+}
+async function varselSlaaPaa(){
+  if (!S.vapidPub || !S.db) { toast("Oppsettet mangler ennå"); return; }
+  S.varselBusy = true; render();
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { S.varselBusy = false; toast("Du må tillate varsler"); render(); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(S.vapidPub) });
+    const o = sub.toJSON();
+    const ny = { endpoint: o.endpoint, keys: o.keys, lagt_til: new Date().toISOString() };
+    const subs = (S.varselSubs || []).filter(x => x.endpoint !== ny.endpoint);
+    subs.push(ny);
+    await S.db.doc("varsel/abonnement").set({ subs });
+    S.varselSubs = subs;
+    toast("Varsel er på på denne enheten");
+  } catch (e) { toast("Fikk ikke slått på varsel: " + (e?.message || e?.name || "ukjent")); }
+  S.varselBusy = false; render();
+}
+async function varselKobleFra(){
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    const ep = sub ? sub.endpoint : null;
+    if (sub) await sub.unsubscribe();
+    if (ep && S.db) { const subs = (S.varselSubs || []).filter(x => x.endpoint !== ep); await S.db.doc("varsel/abonnement").set({ subs }); S.varselSubs = subs; }
+    toast("Koblet fra på denne enheten");
+  } catch (e) { toast("Fikk ikke koblet fra"); }
+  render();
+}
+async function varselTest(){
+  try { const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification("Morgenpuls: test", { body: "Slik ser et varsel ut. Morgen og kveld kommer de av seg selv.", icon: "icon-192.png", tag: "morgenpuls-test" });
+  } catch { toast("Fikk ikke vist test"); }
+}
+async function varselLagre(){
+  const inn = {
+    pa: $("#varselbryter")?.checked !== false,
+    morgen_tid: $("#vtmorgen")?.value || "07:00",
+    kveld_tid: $("#vtkveld")?.value || "21:00",
+    seksjoner: { helse: $("[data-vseks=helse]")?.checked !== false, trading: $("[data-vseks=trading]")?.checked !== false,
+      marked: $("[data-vseks=marked]")?.checked !== false, uke: $("[data-vseks=uke]")?.checked !== false },
+    oppdatert: new Date().toISOString(),
+  };
+  try { await S.db.doc("varsel/innstillinger").set(inn); S.varselInns = inn; toast("Innstillinger lagret"); render(); }
+  catch { toast("Fikk ikke lagret"); }
+}
 function vToday(){
   const f = feed(), d = f?.date || osloDate();
   const h = f?.health, fi = f?.finance, w = f?.world, top = h?.items?.find(x => x.type === "RCT") || h?.items?.[0];
@@ -891,6 +977,10 @@ function vToday(){
     <button class="tile" data-go="nyheter"><span class="big tnum">${w ? w.items.length : "–"}</span><span class="lab">nyhetssaker</span></button>
     <button class="tile" data-go="laering"><span class="big tnum">${S.Lloaded.geo || S.Lloaded.hist ? dueCount("geo") + dueCount("hist") + dueCount("own") + dueCount("vg3") : "–"}</span><span class="lab">kort i dag</span></button>
   </div>
+  ${S.marked && S.marked.status === "ok" ? `<button class="panel market-pulse" data-go="marked" style="width:100%;text-align:left;cursor:pointer;border:0">
+    <div class="eyebrow">Marked</div><div style="font-size:15px">${esc(S.marked.puls || "")}</div>
+    <div class="muted" style="font-size:12px">Egen beregning fra 36MA, ikke en anbefaling. Trykk for fase og styrke mot gull per tema.</div></button>` : ""}
+  ${S.db ? varselPanel() : ""}
   ${S.db ? journalCard() : ""}
   ${S.trading ? `<button class="panel trline" data-go="trading"><span class="eyebrow">Trading</span><span class="tnum"><b>${usd(S.trading.equity)}</b> <span class="${tone(S.trading.return_pct)}">${sgn(S.trading.return_pct, " %")}</span></span><span class="muted tnum">${(S.trading.positions || []).length ? (S.trading.positions || []).map(p => `${esc(p.symbol)} ${sgn(p.pct, " %")}`).join(" · ") : "Ingen åpne posisjoner"}</span></button>` : ""}
   ${top ? `<div class="stack"><div class="eyebrow">Dagens studie</div>${studyCard(top)}</div>` : ""}
@@ -900,11 +990,17 @@ function vToday(){
 }
 
 /* helse */
+function folgMerke(s){
+  const folgOrd = (S.config?.health_follow || []).map(f => String(f.label || "")).filter(Boolean);
+  const t = [s.title, s.summary, (s.themes || []).join(" "), s.theme].join(" ").toLowerCase();
+  const traff = folgOrd.filter(o => o && t.includes(o.toLowerCase()));
+  return traff.length ? `<span class="chip on" style="font-size:11px">Følger: ${esc(traff.slice(0,2).join(", "))}</span>` : "";
+}
 function studyCard(s){
   const url = safeUrl(s.url || (s.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(s.pmid)}/` : ""));
   const pn = participants(s), meta = [["Deltakere", s.n], ["Varighet", s.duration], ["Tidsskrift", s.journal]].filter(x => x[1]);
   return `<article class="study">
-    <div class="spread"><span class="row" style="gap:6px"><span class="badge ${s.type==="RCT"?"rct":""}">${esc(s.type || "Studie")}</span>${pn >= 300 ? `<span class="badge big">300+</span>` : ""}</span><span class="muted" style="font-size:13px">${esc(s.theme || "")}</span></div>
+    <div class="spread"><span class="row" style="gap:6px"><span class="badge ${s.type==="RCT"?"rct":""}">${esc(s.type || "Studie")}</span>${pn >= 300 ? `<span class="badge big">300+</span>` : ""}${folgMerke(s)}</span><span class="muted" style="font-size:13px">${esc(s.theme || "")}</span></div>
     <div class="en">${esc(s.title)}</div>
     ${s.summary ? `<div class="sum"><span class="eyebrow">Sammendrag</span><p>${esc(s.summary)}</p></div>` : ""}
     ${meta.length ? `<div class="meta">${meta.map(([k,v]) => `<div>${k}<b>${esc(v)}</b></div>`).join("")}</div>` : ""}
@@ -933,6 +1029,56 @@ function vHealth(){
   if (sub === "styrke") return `<div class="stack">${tabs}${vStyrke()}</div>`;
   if (sub === "sovn") return `<div class="stack">${tabs}${vSovn()}</div>`;
   return tabs + vStudier();
+}
+/* Marked. Egen beregning fra 36MA-dataene (fase, styrke mot gull, tema), ikke
+   gjengivelse av Northstar eller Badcharts sine roadmaps. Beskrivelse, ikke raad:
+   screeneren lister hva som matcher kriteriene, aldri hva du boer gjoere. */
+const FASEFARGE = {2: "ok", 3: "", 1: "", 4: "err"};
+function faseMerke(n, tekst){ return n ? `<span class="v ${FASEFARGE[n] || ""}">${esc(tekst || ("Fase " + n))}</span>` : `<span class="muted">ukjent</span>`; }
+function styrkeTekst(r){
+  if (r.styrke_mot_gull === null || r.styrke_mot_gull === undefined) return "";
+  const v = r.styrke_mot_gull, p = v > 0 ? "+" : "";
+  return `${p}${v} pp mot gull${r.styrke_retning ? ", " + r.styrke_retning : ""}`;
+}
+function vMarked(){
+  const d = S.marked, sub = S.mSub || "roadmap";
+  const tabs = `<div class="subtabs">${[["roadmap","Roadmap"],["screener","Screener"],["makro","Makro og uran"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
+  if (sub === "makro") return `<div class="stack">${tabs}${vMakro()}</div>`;
+  if (!d || d.status !== "ok") return `<div class="stack">${tabs}<div class="panel stack"><h2>Marked</h2>
+    <p class="muted">Fase og styrke mot gull regnes fra 36MA-dataene i den daglige kjøringen. Første kjøring legger det inn i dag. Makro og uran ligger under fanen over.</p></div></div>`;
+  const b = d.bredder || {};
+  const topp = `<div class="panel stack">
+    <div class="spread"><h2>Markedsbilde</h2><span class="muted tnum" style="font-size:13px">36MA ${esc(d.kilde_ma36 || d.date)}</span></div>
+    <p>${esc(d.puls || "")}</p>
+    <div class="row" style="gap:16px;flex-wrap:wrap">
+      <div><b style="font-size:22px">${b.over_36ma_mnd}/${b.totalt}</b><br><span class="muted" style="font-size:13px">over 36MA (måned)</span></div>
+      <div><b style="font-size:22px">${b.fase2}</b><br><span class="muted" style="font-size:13px">i fase 2</span></div>
+      <div><b style="font-size:22px">${b.slaar_gull}</b><br><span class="muted" style="font-size:13px">slår gull</span></div>
+    </div>
+    <p class="muted" style="font-size:12px">${esc(d.note || "")}</p></div>`;
+  if (sub === "screener") {
+    const liste = d.screener || [];
+    return `<div class="stack">${tabs}${topp}
+      <div class="panel stack">
+        <div class="eyebrow">Matcher kriteriene · ${liste.length}</div>
+        <p class="muted" style="font-size:13px">Sortert på fase, plass over 36MA, styrke mot gull og retning. Dette er ikke en anbefaling om å kjøpe eller selge, bare hva som treffer kriteriene nå.</p>
+        <div class="notes">${liste.map(r => `<div class="lrow"><div class="lco"><b>${esc(r.name || r.ticker)}</b><span class="muted">${esc(r.tema)} · ${styrkeTekst(r) || "styrke ukjent"}</span></div><div class="lt">${faseMerke(r.fase, r.fase_tekst)}<div class="muted tnum" style="font-size:12px">${r.dist_36ma_mnd !== null && r.dist_36ma_mnd !== undefined ? (r.dist_36ma_mnd > 0 ? "+" : "") + r.dist_36ma_mnd + "% fra 36MA" : ""}</div></div></div>`).join("")}</div>
+      </div></div>`;
+  }
+  // roadmap per tema
+  const temaer = d.temaer || [];
+  const fasenavn = {1: "bunn", 2: "opptrend", 3: "distribusjon", 4: "nedtrend"};
+  return `<div class="stack">${tabs}${topp}
+    ${temaer.map(t => {
+      const inst = (d.instrumenter || []).filter(r => r.tema === t.tema).sort((a, c) => (c.styrke_mot_gull ?? -999) - (a.styrke_mot_gull ?? -999));
+      return `<div class="panel stack">
+        <div class="spread"><h2 style="font-size:17px">${esc(t.tema)}</h2>
+          <span class="muted" style="font-size:13px">${t.over}/${t.antall} over 36MA${t.snitt_styrke_mot_gull !== null ? " · " + (t.snitt_styrke_mot_gull > 0 ? "+" : "") + t.snitt_styrke_mot_gull + " pp mot gull" : ""}</span></div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">${[2,3,1,4].filter(f => t.faser[f]).map(f => `<span class="v ${FASEFARGE[f]}" style="font-size:12px">${t.faser[f]} i ${esc(fasenavn[f])}</span>`).join("")}</div>
+        <div class="notes">${inst.map(r => `<div class="lrow"><div class="lco"><b>${esc(r.name || r.ticker)}</b><span class="muted">${styrkeTekst(r) || "styrke ukjent"}</span></div><div class="lt">${faseMerke(r.fase, r.fase_tekst)}</div></div>`).join("")}</div>
+      </div>`;
+    }).join("")}
+  </div>`;
 }
 /* Soevnregularitet. SRI er det beste maalet vi har paa noe du faktisk kan styre:
    Windred et al. (SLEEP 2024, UK Biobank, 60 997 med gyldig skaar) fant 20 til 48
@@ -1106,38 +1252,55 @@ function vDebrief(){
   const maaned = osloDate().slice(0, 7);
   const iMnd = ferdige.filter(x => String(x.til || "").slice(0, 7) === maaned).length;
   if (!d) return `<div class="panel stack"><h2>Ukesdebrief</h2>
-    <p class="muted">Grunnlaget lages av den daglige kjøringen når uka er over. Den henter navngitte hendelser fra handelsloggen, styrkeloggen, søvnen, meldingene, shortregisteret, repetisjonene og innboksen, og stiller deg fire spørsmål om dem.</p></div>`;
+    <p class="muted">Den daglige kjøringen lager grunnlaget når uka er over: navngitte hendelser fra trading, styrke, søvn, meldinger, short, repetisjoner og innboks, og fire spørsmål om dem. Da dukker uka opp her.</p></div>`;
   const svar = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar.svar : (d.svar || {});
-  const grupper = {};
-  (d.hendelser || []).forEach(h => { (grupper[h.kilde] = grupper[h.kilde] || []).push(h); });
-  const antall = (d.hendelser || []).length;
+  const hs = d.hendelser || [], antall = hs.length;
+  const ferdig = d.status === "ferdig";
   const kanArkivere = antall >= (d.krav_hendelser || 3) && Object.values(svar).some(v => String(v || "").trim().length > 2);
+
+  // Hoeydepunkter: de faa hendelsene som er verdt aa se foerst, ikke alt.
+  const trades = hs.filter(h => h.kilde === "Trading");
+  const brudd = hs.filter(h => h.kilde === "Risiko");
+  const topp = [...brudd, ...trades].slice(0, 4);
+  // Kilder som en kompakt stripe, med alt bak en details.
+  const grupper = {};
+  hs.forEach(h => { (grupper[h.kilde] = grupper[h.kilde] || []).push(h); });
+  const ukenr = x => String(x.uke).split("-W")[1];
+
   return `<div class="stack">
     <div class="panel stack">
-      <div class="spread"><h2>Uke ${esc(String(d.uke).replace("-W", ", uke "))}</h2>
-        <span class="muted tnum" style="font-size:13px">${esc(d.fra)} til ${esc(d.til)}</span></div>
-      <p class="muted" style="font-size:13px">${ferdige.length} arkiverte debriefer, ${iMnd} denne måneden. ${d.status === "ferdig" ? "Denne uka er arkivert." : "Denne uka er ikke arkivert."}</p>
-      ${alle.length > 1 ? `<div class="subtabs">${alle.slice(0, 8).map(x => `<button class="btn small ${x.uke === d.uke ? "primary" : ""}" data-uke="${esc(x.uke)}">uke ${esc(String(x.uke).split("-W")[1])}${x.status === "ferdig" ? " ✓" : ""}</button>`).join("")}</div>` : ""}
+      <div class="spread">
+        <h2 style="margin:0">Uke ${esc(ukenr(d))}</h2>
+        <span class="pill ${ferdig ? "ok" : ""}">${ferdig ? "Arkivert" : "Ikke arkivert"}</span>
+      </div>
+      <div class="spread" style="align-items:center">
+        <span class="muted" style="font-size:13px">${esc(d.fra)} til ${esc(d.til)}</span>
+        ${alle.length > 1 ? `<select class="txt" id="ukesel" style="width:auto;min-width:120px">${alle.slice(0, 12).map(x => `<option value="${esc(x.uke)}" ${x.uke === d.uke ? "selected" : ""}>Uke ${esc(ukenr(x))}${x.status === "ferdig" ? " ✓" : ""}</option>`).join("")}</select>` : ""}
+      </div>
+      ${ferdige.length ? `<p class="muted" style="font-size:12px">${ferdige.length} arkivert totalt, ${iMnd} denne måneden.</p>` : ""}
     </div>
 
-    <div class="panel stack">
-      <div class="eyebrow">Hendelser fra uka · ${antall}</div>
-      ${antall ? Object.entries(grupper).map(([kilde, hs]) => `<div class="stack" style="gap:4px">
-        <b style="font-size:14px">${esc(kilde)}</b>
-        <div class="notes">${hs.slice(0, 8).map(h => `<div class="note"><span class="d">${esc(String(h.dato || "").slice(5))}</span><span>${esc(h.tekst)}</span><span class="muted" style="font-size:12px">${esc(h.ref)}</span></div>`).join("")}</div>
-        ${hs.length > 8 ? `<span class="muted" style="font-size:13px">og ${hs.length - 8} flere</span>` : ""}</div>`).join("") : `<p class="muted">Ingen hendelser funnet for uka. Da er det ingenting å debriefe, og det er også et svar.</p>`}
-      ${antall < (d.krav_hendelser || 3) ? `<p class="warn">Under ${esc(String(d.krav_hendelser || 3))} navngitte hendelser. Da kan uka ikke arkiveres, for en debrief uten hendelser er et skjema.</p>` : ""}
-    </div>
+    ${topp.length ? `<div class="panel stack">
+      <div class="eyebrow">Verdt å merke seg</div>
+      ${topp.map(h => `<div class="lrow"><div class="lco"><b>${esc(h.kilde)}</b><span class="muted">${esc(String(h.dato || "").slice(5))}</span></div><div class="lt" style="text-align:left;flex:2">${esc(h.tekst)}</div></div>`).join("")}
+    </div>` : ""}
 
     <div class="panel stack">
       <div class="eyebrow">Fire spørsmål</div>
-      ${(d.sporsmaal || []).map(q => `<label class="lbl" for="uq-${esc(q.id)}">${esc(q.q)}
-        <textarea id="uq-${esc(q.id)}" class="txt" data-uq="${esc(q.id)}" style="min-height:64px" ${d.status === "ferdig" ? "readonly" : ""} placeholder="${d.status === "ferdig" ? "" : "Skriv kort"}">${esc(svar[q.id] || "")}</textarea></label>`).join("")}
-      ${d.status === "ferdig"
-        ? `<p class="muted" style="font-size:13px">Arkivert${d.arkivert_notat ? " som notat" : ""}.${d.arkivert_notat ? ` <button class="btn small" data-nopen="${esc(d.arkivert_notat)}">Åpne notatet</button>` : ""}</p>`
-        : `<div class="row"><button class="btn primary" id="ukearkiv" ${kanArkivere ? "" : "disabled"}>Arkiver uka</button>
-           <span class="muted" style="font-size:13px">${kanArkivere ? "Svarene lagres og skrives som notat under Ukesdebrief." : "Svar på minst ett spørsmål først."}</span></div>`}
+      <p class="muted" style="font-size:13px">${ferdig ? "Dette svarte du." : "Kort er nok. Rammen er hva du endrer, ikke om du traff målene."}</p>
+      ${(d.sporsmaal || []).map(q => `<label class="lbl" for="uq-${esc(q.id)}" style="font-weight:500">${esc(q.q)}
+        <textarea id="uq-${esc(q.id)}" class="txt" data-uq="${esc(q.id)}" style="min-height:56px" ${ferdig ? "readonly" : ""} placeholder="${ferdig ? "" : "Skriv kort"}">${esc(svar[q.id] || "")}</textarea></label>`).join("")}
+      ${ferdig
+        ? `<div class="row">${d.arkivert_notat ? `<button class="btn small primary" data-nopen="${esc(d.arkivert_notat)}">Åpne notatet</button>` : ""}<span class="muted" style="font-size:13px">Arkivert og låst.</span></div>`
+        : `<div class="row" style="align-items:center"><button class="btn primary" id="ukearkiv" ${kanArkivere ? "" : "disabled"}>Arkiver uka</button>
+           <span class="muted" style="font-size:13px">${antall < (d.krav_hendelser || 3) ? "Trenger minst " + (d.krav_hendelser || 3) + " hendelser." : kanArkivere ? "Lagres og skrives som notat." : "Svar på minst ett spørsmål."}</span></div>`}
     </div>
+
+    ${antall ? `<details class="panel"><summary class="eyebrow" style="cursor:pointer;list-style:revert">Alle ${antall} hendelser fra uka</summary>
+      <div class="stack" style="margin-top:10px">${Object.entries(grupper).map(([kilde, arr]) => `<div class="stack" style="gap:3px">
+        <b style="font-size:13px">${esc(kilde)} · ${arr.length}</b>
+        <div class="notes">${arr.map(h => `<div class="note"><span class="d">${esc(String(h.dato || "").slice(5))}</span><span>${esc(h.tekst)}</span></div>`).join("")}</div></div>`).join("")}</div>
+    </details>` : `<p class="muted" style="font-size:13px;padding:0 4px">Ingen hendelser funnet for uka. Det er også et svar.</p>`}
   </div>`;
 }
 function vStudier(){
@@ -1145,7 +1308,13 @@ function vStudier(){
   const counts = h?.counts || {}; const order = ["RCT","Oversikt","Observasjon","Kasus","Annet"];
   const tot = order.reduce((a,k) => a + (counts[k]||0), 0), all = h?.items || [];
   const big = s => (participants(s) || 0) >= 300;
-  const items = all.filter(s => (!S.hType || s.type === S.hType) && (!S.hTheme || themesOf(s).includes(S.hTheme)) && (!S.hBig || big(s)));
+  // Prioritering: studiene som hoerer til temaene dine og det du foelger legges
+  // oeverst. Dette skjer i koden, ikke i AI-en: regel med ett riktig svar.
+  const folgOrd = (S.config?.health_follow || []).map(f => String(f.label || "").toLowerCase()).filter(Boolean);
+  const folgTreff = s => { const t = [s.title, s.summary, (s.themes || []).join(" "), s.theme].join(" ").toLowerCase(); return folgOrd.filter(o => o && t.includes(o)); };
+  const prioritet = s => themesOf(s).length * 2 + (folgTreff(s).length ? 3 : 0) + (s.type === "RCT" ? 1.5 : s.type === "Oversikt" ? 1 : 0) + (big(s) ? 1 : 0);
+  const items = all.filter(s => (!S.hType || s.type === S.hType) && (!S.hTheme || themesOf(s).includes(S.hTheme)) && (!S.hBig || big(s)))
+    .map((s, i) => ({s, i, p: prioritet(s)})).sort((a, b) => b.p - a.p || a.i - b.i).map(x => x.s);
   const nBig = all.filter(s => big(s) && (!S.hType || s.type === S.hType) && (!S.hTheme || themesOf(s).includes(S.hTheme))).length;
   const nTheme = label => all.filter(s => themesOf(s).includes(label) && (!S.hType || s.type === S.hType) && (!S.hBig || (participants(s) || 0) >= 300)).length;
   const nType = k => all.filter(s => s.type === k && (!S.hTheme || themesOf(s).includes(S.hTheme))).length;
@@ -1183,8 +1352,8 @@ function newsCard(n){
 }
 function vFinance(){
   const sub = S.finSub || "news";
-  const tabs = `<div class="subtabs">${[["news","Meldinger"],["ma36","36MA-status"],["short","Short"],["marked","Marked"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-fsub="${k}">${l}</button>`).join("")}</div>`;
-  return `<div class="stack">${tabs}${sub === "ma36" ? vMa36() : sub === "short" ? vShort() : sub === "marked" ? vMarked() : `<div class="stack">${vFinNews()}${vNasdaq()}</div>`}</div>`;
+  const tabs = `<div class="subtabs">${[["news","Meldinger"],["ma36","36MA-status"],["short","Short"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-fsub="${k}">${l}</button>`).join("")}</div>`;
+  return `<div class="stack">${tabs}${sub === "ma36" ? vMa36() : sub === "short" ? vShort() : `<div class="stack">${vFinNews()}${vNasdaq()}</div>`}</div>`;
 }
 function vFinNews(){
   const fi = feed()?.finance;
@@ -1373,7 +1542,7 @@ function vNasdaq(){
     <div class="rlist">${liste.slice(0, 15).map(m => `<a class="ritem" href="${esc(m.url || "#")}" target="_blank" rel="noopener"><span class="t">${esc(m.selskap)}: ${esc(m.tittel)}</span><span class="s">${esc(m.dato || m.dag || "")}</span></a>`).join("")}</div>
     <p class="muted" style="font-size:13px">Treffene er funnet ved navnematching, så listen kan være ufullstendig. Oslo Børs NewsWeb har ingen gratis feed, så de meldingene kommer fra MFN som før.</p></div>`;
 }
-function vMarked(){
+function vMakro(){
   const k = S.kontekst, m = k?.makro, u = (S.uran || []).slice().sort((a, b) => String(b.maaned).localeCompare(String(a.maaned)));
   const siste = u[0], forrige = u[1];
   return `<div class="stack">
@@ -2881,6 +3050,10 @@ const findNews = key => { for (const f of S.feeds) for (const [arr, o] of [[f.wo
 /* ---------- hendelser ---------- */
 document.addEventListener("click", async e => {
   const t = e.target;
+  if (t.id === "varselpa") { varselSlaaPaa(); return true; }
+  if (t.id === "varseltest") { varselTest(); return true; }
+  if (t.id === "varselav2") { varselKobleFra(); return true; }
+  if (t.id === "varsellagre") { varselLagre(); return true; }
   if (t.closest("#opensearch")) { go("sok"); setTimeout(() => { const i = $("#gsearch"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 30); return; }
   const s2c = t.closest("[data-s2c]"); if (s2c) { const s = findStudy(s2c.dataset.s2c); if (s) studyToCards(s); else toast("Fant ikke studien."); return; }
   const rg = t.closest("[data-recgo]"); if (rg) { S.recipeId = rg.dataset.recgo; S.recipeMode = "list"; go("kokk"); return; }
@@ -2944,6 +3117,7 @@ document.addEventListener("click", async e => {
   const fv = t.closest("[data-forsok]"); if (fv) { S.fValgt = fv.dataset.forsok; S.fNy = false; render(); return true; }
   if (t.id === "f-nytt") { S.fNy = true; render(); return true; }
   if (t.id === "f-avbryt") { S.fNy = false; render(); return true; }
+  const ms = t.closest("[data-msub]"); if (ms) { S.mSub = ms.dataset.msub; store.set("mp.msub", S.mSub); render(); return true; }
   const uv = t.closest("[data-uke]"); if (uv) { S.ukeValgt = uv.dataset.uke; S.ukeSvar = null; render(); return true; }
   if (t.id === "ukearkiv") { await arkiverUke(); return true; }
   const hs = t.closest("[data-hsub]"); if (hs) { S.hSub = hs.dataset.hsub; store.set("mp.hsub", S.hSub); render(); return true; }
@@ -2985,6 +3159,7 @@ document.addEventListener("input", e => {
   if (e.target.id === "gsearch") { SQ.q = e.target.value; clearTimeout(SQ.t); SQ.t = setTimeout(() => { const r = $("#sres"); if (r) r.innerHTML = searchResults(); }, 180); }
   if (e.target.dataset?.imptitle !== undefined && IMP.plan) IMP.plan[e.target.dataset.imptitle].title = e.target.value;
   if (e.target.dataset?.impsub !== undefined && IMP.plan) IMP.plan[e.target.dataset.impsub].sub = e.target.value.trim();
+  if (e.target.id === "ukesel") { S.ukeValgt = e.target.value; S.ukeSvar = null; render(); return; }
   if (e.target.dataset?.uq !== undefined) { const d = ukeValgt(); if (d) { const n = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar : {uke: d.uke, svar: {...(d.svar || {})}}; n.svar[e.target.dataset.uq] = e.target.value; S.ukeSvar = n; const b = $("#ukearkiv"); if (b) b.disabled = !Object.values(n.svar).some(v => String(v || "").trim().length > 2); } }
   if (e.target.dataset?.genq !== undefined) S.gen.preview[Number(e.target.dataset.genq)].q = e.target.value;
   if (e.target.dataset?.gena !== undefined) S.gen.preview[Number(e.target.dataset.gena)].a = e.target.value;
@@ -3149,7 +3324,7 @@ function loadLearnDoc(path, key, def){
     .catch(() => { if (key === "G") S.G = def(); else S.L[key] = def(); S.Lloaded[key] = true; render(); });
 }
 async function boot(){
-  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
+  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "roadmap"; { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
   go(VIEWS.includes(h) ? h : (store.get("mp.view") || "idag"));
   loadGeo(); loadHist();
   const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
@@ -3170,14 +3345,18 @@ async function boot(){
   db.collection("styrke").orderBy("date", "desc").limit(200).onSnapshot(snap => { S.styrke = snap.docs.map(d => thaw(d)); if (S.view === "helse" && S.hSub === "styrke") render(); }, () => {});
   db.collection("annotasjon").orderBy("dato", "desc").limit(120).onSnapshot(snap => { S.annot = snap.docs.map(d => thaw(d)); if (S.view === "uke" && S.ukeSub === "endringer") render(); }, () => {});
   db.collection("eksperiment").orderBy("start", "desc").limit(20).onSnapshot(snap => { S.forsok = snap.docs.map(d => thaw(d)); if (S.view === "uke" && S.ukeSub === "forsok") render(); }, () => {});
+  db.doc("varsel/vapid").onSnapshot(s2 => { S.vapidPub = s2.exists ? (thaw(s2).public || null) : null; if (S.view === "idag") render(); }, () => {});
+  db.doc("varsel/innstillinger").onSnapshot(s2 => { S.varselInns = s2.exists ? thaw(s2) : null; if (S.view === "idag") render(); }, () => {});
+  db.doc("varsel/abonnement").onSnapshot(s2 => { S.varselSubs = s2.exists ? (thaw(s2).subs || []) : []; if (S.view === "idag") render(); }, () => {});
+  db.collection("marked").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.marked = snap.docs[0] ? thaw(snap.docs[0]) : null; const n = $("#n-marked"); if (n) n.textContent = S.marked?.bredder?.fase2 || ""; if (S.view === "marked" || S.view === "idag") render(); }, () => {});
   db.collection("debrief").orderBy("uke", "desc").limit(26).onSnapshot(snap => { S.debriefer = snap.docs.map(d => thaw(d)); const n = $("#n-uke"); const venter = S.debriefer.filter(x => x.status !== "ferdig" && (x.hendelser || []).length >= (x.krav_hendelser || 3)).length; if (n) n.textContent = venter || ""; if (S.view === "uke") render(); }, () => {});
   db.doc("helse/sri").onSnapshot(s2 => { S.sri = s2.exists ? thaw(s2) : null; if (S.view === "helse" && S.hSub === "sovn") render(); }, () => {});
   db.collection("helse").orderBy("dag", "desc").limit(40).onSnapshot(snap => { S.sovn = snap.docs.map(d => thaw(d)).filter(d => d.vinduer); if (S.view === "helse" && S.hSub === "sovn") render(); }, () => {});
   db.doc("trading/risiko").onSnapshot(s => { S.risiko = s.exists ? thaw(s) : null; if (S.view === "trading") render(); }, () => {});
   db.collection("short").orderBy("date", "desc").limit(2).onSnapshot(snap => { S.short = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "short") render(); }, () => {});
   db.collection("nasdaq").orderBy("date", "desc").limit(5).onSnapshot(snap => { S.nasdaq = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "news") render(); }, () => {});
-  db.collection("kontekst").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kontekst = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "finans" && S.finSub === "marked") render(); }, () => {});
-  db.collection("uran").orderBy("maaned", "desc").limit(24).onSnapshot(snap => { S.uran = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "marked") render(); }, () => {});
+  db.collection("kontekst").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kontekst = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "marked" && S.mSub === "makro") render(); }, () => {});
+  db.collection("uran").orderBy("maaned", "desc").limit(24).onSnapshot(snap => { S.uran = snap.docs.map(d => thaw(d)); if (S.view === "marked" && S.mSub === "makro") render(); }, () => {});
   db.doc("trading/status").onSnapshot(s => { S.trading = s.exists ? thaw(s) : null; const n = $("#n-trading"); if (n) n.textContent = S.trading?.positions?.length || ""; if (S.view === "trading" || S.view === "idag") render(); }, () => {});
   db.collection("kort-vg3").onSnapshot(snap => { S.vg3Cards = snap.docs.map(d => ({id: d.id, ...thaw(d)})); if (S.view === "laering" && S.learnSub === "vg3" && !S.session) render(); else renderHeader(); }, () => {});
   db.collection("kort").onSnapshot(snap => { S.ownCards = snap.docs.map(d => ({id: d.id, ...thaw(d)})); if (S.view === "laering" && !document.activeElement?.closest?.("#genpanel")) render(); else renderHeader(); }, () => {});

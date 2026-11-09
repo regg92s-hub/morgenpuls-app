@@ -35,3 +35,30 @@ self.addEventListener("fetch", e => {
     const net = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
     return hit || net; }));
 });
+
+
+/* ---------- Push-varsler ----------
+   Payloaden kommer fra tools/varsel.js i GitHub Actions. Vi viser den som den
+   er. Trykk paa varselet aapner appen (eller fokuserer en aapen fane). */
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data ? e.data.text() : "" }; }
+  const tittel = d.title || "Morgenpuls";
+  e.waitUntil(self.registration.showNotification(tittel, {
+    body: d.body || "",
+    tag: d.tag || "morgenpuls",
+    icon: "icon-192.png",
+    badge: "icon-192.png",
+    data: { url: d.url || "/" },
+    renotify: true,
+  }));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const maal = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil((async () => {
+    const liste = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of liste) { if ("focus" in c) { c.navigate && maal !== "/" ? c.navigate(maal) : null; return c.focus(); } }
+    if (self.clients.openWindow) return self.clients.openWindow(maal);
+  })());
+});
