@@ -346,6 +346,15 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 .mac{display:inline-flex;align-items:center;gap:5px;border-radius:7px;padding:3px 7px;font-size:12.5px;line-height:1.3;white-space:nowrap;background:var(--surface-2);color:var(--muted);border:1px solid transparent}
 .mac b{font-weight:700}.mac i{font-style:normal}
 .mac.g{background:var(--ok-soft);color:var(--ok)}.mac.y{background:var(--warn-soft);color:var(--warn)}.mac.r{background:var(--accent-soft);color:var(--accent)}.mac.n{border-color:var(--line)}
+/* Marked, roadmaps og aksjer */
+.mtab{width:100%;border-collapse:collapse;font-size:14px}.mtab th{font-size:12px;font-weight:600;color:var(--muted);text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}.mtab th:first-child,.mtab td:first-child{text-align:left}.mtab td{padding:8px;border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}.mtab tr:last-child td{border-bottom:0}
+.bar{height:8px;border-radius:4px;background:var(--surface-2);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.rmitem{border-bottom:1px solid var(--line)}.rmitem:last-child{border-bottom:0}
+.rmhead{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.6fr) auto;gap:10px;align-items:center;width:100%;text-align:left;background:none;border:0;padding:10px 0;color:inherit;font:inherit;cursor:pointer;min-height:44px}
+.rmhead .lco{display:flex;flex-direction:column;gap:2px;min-width:0}.rmhead .lco span{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rmmid{display:flex;gap:6px;flex-wrap:wrap}.rmend{display:flex;gap:10px;align-items:center;justify-content:flex-end}
+.rmdet{padding:4px 0 14px}
+@media (max-width:560px){.rmhead{grid-template-columns:minmax(0,1fr) auto}.rmmid{grid-column:1/-1;grid-row:2}}
 .masum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.masum .panel{padding:12px 14px}.masum .big{font-family:var(--f-display);font-size:26px;font-weight:800;line-height:1.1}
 .matable{display:grid;gap:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface)}
 .marow{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(3,minmax(0,1fr));gap:8px;align-items:center;padding:10px 12px;border:0;border-top:1px solid var(--line);background:none;color:inherit;font:inherit;text-align:left;width:100%}
@@ -409,14 +418,12 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     <nav class="tabs" role="tablist" id="tabs">
       <button class="tab" role="tab" data-v="idag">I dag</button>
       <button class="tab" role="tab" data-v="helse">Helse<span class="n" id="n-helse"></span></button>
-      <button class="tab" role="tab" data-v="finans">Finans<span class="n" id="n-finans"></span></button>
-      <button class="tab" role="tab" data-v="trading">Trading<span class="n" id="n-trading"></span></button>
+      <button class="tab" role="tab" data-v="finans">Mine posisjoner<span class="n" id="n-finans"></span></button>
       <button class="tab" role="tab" data-v="marked">Marked<span class="n" id="n-marked"></span></button>
       <button class="tab" role="tab" data-v="nyheter">Nyheter<span class="n" id="n-nyheter"></span></button>
-      <button class="tab" role="tab" data-v="kokk">Kokk<span class="n" id="n-kokk"></span></button>
+      <button class="tab" role="tab" data-v="verktoy">Verktøy<span class="n" id="n-verktoy"></span></button>
       <button class="tab" role="tab" data-v="laering">Læring<span class="n" id="n-laering"></span></button>
-      <button class="tab" role="tab" data-v="gitar">Gitar</button>
-      <button class="tab" role="tab" data-v="uke">Uke<span class="n" id="n-uke"></span></button>
+      <button class="tab" role="tab" data-v="rapport">Rapport<span class="n" id="n-rapport"></span></button>
       <button class="tab" role="tab" data-v="notater">Notater</button>
     </nav>
   </header>
@@ -615,11 +622,12 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     // Store samlinger ligger i egne filer (bundle/<navn>.json) slik at den daglige
     // kopien holder seg liten. Feiler en av dem, beholder vi den forrige utgaven
     // i stedet for å vise en tom samling.
-    for (const navn of (d.ekstra || [])) {
+    // Hentes parallelt: feed, notater og kort er flere megabyte til sammen.
+    await Promise.all((d.ekstra || []).map(async navn => {
       let docs = null;
       try { const rr = await gh(`${R}/contents/bundle/${navn}.json?ref=${BRANCH}`, { raw: true }); if (rr.ok) docs = (await rr.json()).docs || {}; } catch {}
       BUNDLE.collections[navn] = docs || forrige[navn] || {};
-    }
+    }));
     await KV.set("bundle", BUNDLE);
     const cut = BUNDLE.generated_at || "";
     for (const [p, o] of Object.entries(OV)) if (o.t < cut && !Q.some(x => x.path === p)) delete OV[p];   // bundelen har tatt den igjen
@@ -837,7 +845,7 @@ const S = {
   geo: null, flags: null, maps: null, mapsLoading: false,
   L: {geo: null, hist: null}, Lloaded: {}, hist: null, learnSub: "geo", session: null, showSettings: null, tpDoc: {}, editThemes: false,
   hType: null, hTheme: null, trading: null, notes: [], ownCards: null, gen: {text:"", source:"", n:10, style:"fakta", preview:[], busy:false, status:""}, ownOpen: null,
-  styrke: [], hSub: "studier", stSist: "", rlog: null, sri: null, sovn: [], debriefer: [], ukeSvar: null, ukeValgt: "",
+  hSub: "studier", rlog: null, sri: null, sovn: [], debriefer: [], ukeSvar: null, ukeValgt: "",
   ukeSub: "debrief", annot: [], forsok: [], fValgt: "", fNy: false, marked: null, mSub: "roadmap",
   vapidPub: null, varselInns: null, varselSubs: [], varselBusy: false,
   G: {fb:{}, fbDays:{}, fbNat:true, ear:{ok:0, n:0}, earMode:"iv", earLevel:"lett", known:[]}, gSub: "fb", gItems: [], gLog: [], fb: null, ear: null, fbStreak: 0,
@@ -851,8 +859,12 @@ const CARDTYPES = {flag:"Flagg → land", map:"Kart → land", cap:"Land → hov
 const feed = () => S.feeds[S.feedIdx] || null;
 
 /* ---------- navigasjon ---------- */
-const VIEWS = ["idag","helse","finans","trading","marked","nyheter","kokk","laering","gitar","uke","notater","sok"];
-function go(v){ if (!VIEWS.includes(v)) v = "idag"; S.view = v; try { history.replaceState(null, "", "#" + v); } catch {} store.set("mp.view", v);
+const VIEWS = ["idag","helse","finans","marked","nyheter","verktoy","laering","rapport","notater","sok"];
+// Gamle navn (lenker, varsler, lagret fane) peker til sin plass i de nye fanene.
+const ALIAS = {trading: ["verktoy", "trading"], kokk: ["verktoy", "kokk"], gitar: ["verktoy", "gitar"], uke: ["rapport", "uke"]};
+const inV = n => S.view === n || (ALIAS[n] && S.view === ALIAS[n][0]);
+function go(v){ if (ALIAS[v]) { const [vw, sub] = ALIAS[v]; if (vw === "verktoy") S.vkSub = sub; if (vw === "rapport") S.rapSub = sub; v = vw; }
+  if (!VIEWS.includes(v)) v = "idag"; S.view = v; try { history.replaceState(null, "", "#" + v); } catch {} store.set("mp.view", v);
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === v)));
   if (v === "laering" && S.learnSub === "geo") loadMaps(); render(); window.scrollTo({top:0}); }
 $("#tabs").addEventListener("click", e => { const b = e.target.closest(".tab"); if (b) go(b.dataset.v); });
@@ -870,12 +882,12 @@ function renderHeader(){
   sel.innerHTML = S.feeds.map((x,i) => `<option value="${i}" ${i===S.feedIdx?"selected":""}>${esc(dl(x.date))}</option>`).join("");
   const hi = f?.health?.items?.length, fi = f?.finance?.items?.length, ni = f?.world?.items?.length;
   $("#n-helse").textContent = hi || ""; $("#n-finans").textContent = fi || ""; $("#n-nyheter").textContent = ni || "";
-  $("#n-kokk").textContent = S.recipes.length || ""; const due = dueCount("geo") + dueCount("hist") + dueCount("own") + dueCount("vg3"); $("#n-laering").textContent = due ? due : "";
+  $("#n-verktoy").textContent = S.recipes.length || ""; const due = dueCount("geo") + dueCount("hist") + dueCount("own") + dueCount("vg3"); $("#n-laering").textContent = due ? due : "";
 }
 
 /* ---------- render ---------- */
 function render(){ renderHeader(); if (S.view === "notater" && (editorFocused() || (N.importing && document.activeElement?.closest?.(".imp") && document.activeElement.matches("input:not([type=file]),textarea,select")) || (N.capturing && document.activeElement?.closest?.(".cap") && document.activeElement.matches("input:not([type=file]),textarea,select")))) return; if (S.view === "sok" && document.activeElement?.id === "gsearch") { const r = $("#sres"); if (r) r.innerHTML = searchResults(); return; } const m = $("#main");
-  const fn = {idag:vToday, helse:vHealth, finans:vFinance, trading:vTrading, marked:vMarked, nyheter:vWorld, kokk:vKitchen, laering:vLearn, gitar:vGuitar, uke:vUke, notater:vNotes, sok:vSearch}[S.view];
+  const fn = {idag:vToday, helse:vHealth, finans:vFinance, marked:vMarked, nyheter:vWorld, verktoy:vTools, laering:vLearn, rapport:vRapport, notater:vNotes, sok:vSearch}[S.view];
   m.innerHTML = `<section class="view">${fn()}</section>`; }
 
 function emptyFeed(what){ return `<div class="empty"><b>Ingen ${what} for denne dagen ennå.</b><br>Den daglige oppdateringen kjører hver morgen og fyller denne fanen. Første kjøring legges inn i dag.</div>`; }
@@ -977,9 +989,9 @@ function vToday(){
     <button class="tile" data-go="nyheter"><span class="big tnum">${w ? w.items.length : "–"}</span><span class="lab">nyhetssaker</span></button>
     <button class="tile" data-go="laering"><span class="big tnum">${S.Lloaded.geo || S.Lloaded.hist ? dueCount("geo") + dueCount("hist") + dueCount("own") + dueCount("vg3") : "–"}</span><span class="lab">kort i dag</span></button>
   </div>
-  ${S.marked && S.marked.status === "ok" ? `<button class="panel market-pulse" data-go="marked" style="width:100%;text-align:left;cursor:pointer;border:0">
-    <div class="eyebrow">Marked</div><div style="font-size:15px">${esc(S.marked.puls || "")}</div>
-    <div class="muted" style="font-size:12px">Egen beregning fra 36MA, ikke en anbefaling. Trykk for fase og styrke mot gull per tema.</div></button>` : ""}
+  ${marketPulse()}
+  ${kalCard()}
+  ${dagsformCard()}
   ${S.db ? varselPanel() : ""}
   ${S.db ? journalCard() : ""}
   ${S.trading ? `<button class="panel trline" data-go="trading"><span class="eyebrow">Trading</span><span class="tnum"><b>${usd(S.trading.equity)}</b> <span class="${tone(S.trading.return_pct)}">${sgn(S.trading.return_pct, " %")}</span></span><span class="muted tnum">${(S.trading.positions || []).length ? (S.trading.positions || []).map(p => `${esc(p.symbol)} ${sgn(p.pct, " %")}`).join(" · ") : "Ingen åpne posisjoner"}</span></button>` : ""}
@@ -1024,62 +1036,477 @@ function followPanel(h){
   </div>`;
 }
 function vHealth(){
-  const sub = S.hSub || "studier";
-  const tabs = `<div class="subtabs">${[["studier","Studier"],["styrke","Styrke"],["sovn","Søvn"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-hsub="${k}">${l}</button>`).join("")}</div>`;
-  if (sub === "styrke") return `<div class="stack">${tabs}${vStyrke()}</div>`;
-  if (sub === "sovn") return `<div class="stack">${tabs}${vSovn()}</div>`;
+  const sub = S.hSub === "form" || S.hSub === "sovn" ? "form" : "studier";
+  const tabs = `<div class="subtabs">${[["studier","Studier"],["form","Form"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-hsub="${k}">${l}</button>`).join("")}</div>`;
+  if (sub === "form") return `<div class="stack">${tabs}${vForm()}</div>`;
   return tabs + vStudier();
 }
-/* Marked. Egen beregning fra 36MA-dataene (fase, styrke mot gull, tema), ikke
-   gjengivelse av Northstar eller Badcharts sine roadmaps. Beskrivelse, ikke raad:
-   screeneren lister hva som matcher kriteriene, aldri hva du boer gjoere. */
-const FASEFARGE = {2: "ok", 3: "", 1: "", 4: "err"};
-function faseMerke(n, tekst){ return n ? `<span class="v ${FASEFARGE[n] || ""}">${esc(tekst || ("Fase " + n))}</span>` : `<span class="muted">ukjent</span>`; }
-function styrkeTekst(r){
-  if (r.styrke_mot_gull === null || r.styrke_mot_gull === undefined) return "";
-  const v = r.styrke_mot_gull, p = v > 0 ? "+" : "";
-  return `${p}${v} pp mot gull${r.styrke_retning ? ", " + r.styrke_retning : ""}`;
+/* Form. Søvn, HRV og Body Battery fra Garmin samlet i ett bilde. Tallene
+   hentes av kjøringen (tools/garmin.py) og vises som de er. Appen tolker ikke
+   HRV selv: statusen og normalområdet er Garmins egne. */
+const fmtT = m => m == null ? "–" : Math.floor(m / 60) + " t " + String(Math.round(m % 60)).padStart(2, "0");
+function formDager(n = 14){
+  const per = {};
+  for (const x of S.sovn || []) if (x.dag) (per[x.dag] = per[x.dag] || {dag: x.dag}).sovn = x.minutter || null;
+  for (const x of S.form || []) if (x.dag) { const o = (per[x.dag] = per[x.dag] || {dag: x.dag}); o.hrv = x.hrv || null; o.bb = x.body_battery || null; }
+  return Object.values(per).sort((a, b) => String(a.dag).localeCompare(String(b.dag))).slice(-n);
 }
-function vMarked(){
-  const d = S.marked, sub = S.mSub || "roadmap";
-  const tabs = `<div class="subtabs">${[["roadmap","Roadmap"],["screener","Screener"],["makro","Makro og uran"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
-  if (sub === "makro") return `<div class="stack">${tabs}${vMakro()}</div>`;
-  if (!d || d.status !== "ok") return `<div class="stack">${tabs}<div class="panel stack"><h2>Marked</h2>
-    <p class="muted">Fase og styrke mot gull regnes fra 36MA-dataene i den daglige kjøringen. Første kjøring legger det inn i dag. Makro og uran ligger under fanen over.</p></div></div>`;
-  const b = d.bredder || {};
-  const topp = `<div class="panel stack">
-    <div class="spread"><h2>Markedsbilde</h2><span class="muted tnum" style="font-size:13px">36MA ${esc(d.kilde_ma36 || d.date)}</span></div>
-    <p>${esc(d.puls || "")}</p>
-    <div class="row" style="gap:16px;flex-wrap:wrap">
-      <div><b style="font-size:22px">${b.over_36ma_mnd}/${b.totalt}</b><br><span class="muted" style="font-size:13px">over 36MA (måned)</span></div>
-      <div><b style="font-size:22px">${b.fase2}</b><br><span class="muted" style="font-size:13px">i fase 2</span></div>
-      <div><b style="font-size:22px">${b.slaar_gull}</b><br><span class="muted" style="font-size:13px">slår gull</span></div>
-    </div>
-    <p class="muted" style="font-size:12px">${esc(d.note || "")}</p></div>`;
-  if (sub === "screener") {
-    const liste = d.screener || [];
-    return `<div class="stack">${tabs}${topp}
-      <div class="panel stack">
-        <div class="eyebrow">Matcher kriteriene · ${liste.length}</div>
-        <p class="muted" style="font-size:13px">Sortert på fase, plass over 36MA, styrke mot gull og retning. Dette er ikke en anbefaling om å kjøpe eller selge, bare hva som treffer kriteriene nå.</p>
-        <div class="notes">${liste.map(r => `<div class="lrow"><div class="lco"><b>${esc(r.name || r.ticker)}</b><span class="muted">${esc(r.tema)} · ${styrkeTekst(r) || "styrke ukjent"}</span></div><div class="lt">${faseMerke(r.fase, r.fase_tekst)}<div class="muted tnum" style="font-size:12px">${r.dist_36ma_mnd !== null && r.dist_36ma_mnd !== undefined ? (r.dist_36ma_mnd > 0 ? "+" : "") + r.dist_36ma_mnd + "% fra 36MA" : ""}</div></div></div>`).join("")}</div>
-      </div></div>`;
+function miniChart(vals, o = {}){
+  const w = o.w || 260, h = o.h || 56, pad = 4, ok = vals.filter(v => v != null);
+  if (ok.length < 2) return `<div class="muted" style="font-size:12px;height:${h}px;display:flex;align-items:center">For få dager til å tegne</div>`;
+  let lo = Math.min(...ok, o.min ?? Infinity), hi = Math.max(...ok, o.max ?? -Infinity);
+  if (o.band) { lo = Math.min(lo, o.band[0]); hi = Math.max(hi, o.band[1]); }
+  if (hi === lo) { hi += 1; lo -= 1; }
+  const x = i => pad + i * (w - 2 * pad) / (vals.length - 1), y = v => h - pad - (v - lo) * (h - 2 * pad) / (hi - lo);
+  const band = o.band ? `<rect x="${pad}" y="${y(o.band[1]).toFixed(1)}" width="${w - 2 * pad}" height="${Math.max(1, y(o.band[0]) - y(o.band[1])).toFixed(1)}" fill="var(--ok-soft)"/>` : "";
+  let d = "", pen = false;
+  vals.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); pen = true; });
+  const siste = vals.map((v, i) => [v, i]).filter(p => p[0] != null).pop();
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="${esc(o.label || "Utvikling")}" preserveAspectRatio="none">${band}<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/><circle cx="${x(siste[1]).toFixed(1)}" cy="${y(siste[0]).toFixed(1)}" r="3" fill="var(--accent)"/></svg>`;
+}
+const snitt = a => { const v = a.filter(x => x != null); return v.length ? v.reduce((p, c) => p + c, 0) / v.length : null; };
+function formSnitt(dager, f){ const n = dager.length, sist = dager.slice(-7).map(f), foer = dager.slice(-14, -7).map(f); return {naa: snitt(sist), foer: foer.filter(x => x != null).length >= 3 ? snitt(foer) : null, n: sist.filter(x => x != null).length}; }
+function dagsform(){
+  const d = formDager(14), siste = d[d.length - 1];
+  const del = [];
+  const sovn = [...d].reverse().find(x => x.sovn);
+  if (sovn) del.push("sov " + fmtT(sovn.sovn));
+  const hrv = [...d].reverse().find(x => x.hrv?.natt_snitt != null);
+  if (hrv) {
+    const h = hrv.hrv, lav = h.baseline_lav, hoy = h.baseline_hoy;
+    const rel = lav != null && hoy != null ? (h.natt_snitt < lav ? ", under normalområdet" : h.natt_snitt > hoy ? ", over normalområdet" : ", innenfor normalområdet") : "";
+    del.push("HRV " + Math.round(h.natt_snitt) + " ms" + rel);
   }
-  // roadmap per tema
-  const temaer = d.temaer || [];
-  const fasenavn = {1: "bunn", 2: "opptrend", 3: "distribusjon", 4: "nedtrend"};
-  return `<div class="stack">${tabs}${topp}
-    ${temaer.map(t => {
-      const inst = (d.instrumenter || []).filter(r => r.tema === t.tema).sort((a, c) => (c.styrke_mot_gull ?? -999) - (a.styrke_mot_gull ?? -999));
-      return `<div class="panel stack">
-        <div class="spread"><h2 style="font-size:17px">${esc(t.tema)}</h2>
-          <span class="muted" style="font-size:13px">${t.over}/${t.antall} over 36MA${t.snitt_styrke_mot_gull !== null ? " · " + (t.snitt_styrke_mot_gull > 0 ? "+" : "") + t.snitt_styrke_mot_gull + " pp mot gull" : ""}</span></div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">${[2,3,1,4].filter(f => t.faser[f]).map(f => `<span class="v ${FASEFARGE[f]}" style="font-size:12px">${t.faser[f]} i ${esc(fasenavn[f])}</span>`).join("")}</div>
-        <div class="notes">${inst.map(r => `<div class="lrow"><div class="lco"><b>${esc(r.name || r.ticker)}</b><span class="muted">${styrkeTekst(r) || "styrke ukjent"}</span></div><div class="lt">${faseMerke(r.fase, r.fase_tekst)}</div></div>`).join("")}</div>
-      </div>`;
-    }).join("")}
+  const bb = [...d].reverse().find(x => x.bb?.hoy != null);
+  if (bb) del.push("Body Battery høyest " + Math.round(bb.bb.hoy));
+  if (S.sri && S.sri.sri != null && !S.sri.mistenkelig) del.push("søvnregularitet " + S.sri.sri.toFixed(0));
+  // Gårsdagens logging: bare det appen ber om daglig. Repetisjoner kommer fra månedsloggen, forsøk fra forsøkets egen logg.
+  const igaar = new Date(Date.parse(osloDate() + "T12:00:00Z") - 864e5).toISOString().slice(0, 10), dn = dayNum(igaar);
+  const sjekk = [];
+  const rep = (S.rlog?.maaned === igaar.slice(0, 7)) ? (S.rlog.rader || []).some(r => r.d === dn) : null;
+  if (rep !== null) sjekk.push(["kort", rep]);
+  const fs = (S.forsok || []).find(e => e.tildeling && igaar >= e.start && igaar <= e.slutt);
+  if (fs) sjekk.push(["forsøk", (fs.logg || []).some(r => r.dato === igaar)]);
+  const mangler = sjekk.filter(x => !x[1]).map(x => x[0]);
+  return {del, sjekk, mangler, tekst: del.length ? del.join(", ").replace(/^./, c => c.toUpperCase()) + "." : "", logg: sjekk.length ? (mangler.length ? "I går mangler logging av " + mangler.join(" og ") + "." : "Gårsdagens logging er komplett.") : ""};
+}
+function vForm(){
+  const d = formDager(14), harData = d.some(x => x.sovn || x.hrv || x.bb);
+  if (!harData) return `<div class="stack"><div class="panel stack"><h2>Form</h2>
+    <p class="muted">Ingen Garmin-data ennå. Søvn, HRV og Body Battery hentes av kjøringen og krever hemmeligheten GARMIN_API_KEY i repoet. Uten den står resten av appen som før.</p></div>${vSovn()}</div>`;
+  const siste = d[d.length - 1], alder = dayNum() - dayNum(siste.dag);
+  const sv = [...d].reverse().find(x => x.sovn), hv = [...d].reverse().find(x => x.hrv?.natt_snitt != null), bb = [...d].reverse().find(x => x.bb?.hoy != null);
+  const dfm = dagsform();
+  const kort = (navn, f, vis, kart, notat = "") => {
+    const t = formSnitt(d, f); if (t.naa == null) return "";
+    const dl = t.foer != null ? t.naa - t.foer : null;
+    return `<div class="panel stack"><div class="spread"><b>${navn}</b><span class="muted tnum" style="font-size:12px">snitt 7 d: ${vis(t.naa)}${dl != null ? ` · <span class="${tone(dl)}">${dl > 0 ? "+" : "−"}${vis(Math.abs(dl))}</span> mot uka før` : ""}</span></div>${miniChart(d.map(f), kart)}${notat}</div>`; };
+  const hrvBand = (() => { const b = [...d].reverse().find(x => x.hrv?.baseline_lav != null && x.hrv?.baseline_hoy != null); return b ? [b.hrv.baseline_lav, b.hrv.baseline_hoy] : null; })();
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>Dagsform</h2><span class="muted tnum" style="font-size:13px">${esc(siste.dag)}${alder > 1 ? ` · ${alder} d gammel` : ""}</span></div>
+      <div class="tiles">
+        <div class="tile static"><span class="big tnum">${sv ? fmtT(sv.sovn) : "–"}</span><span class="lab">søvn ${sv ? "natt til " + esc(sv.dag.slice(8) + "." + sv.dag.slice(5, 7)) : ""}</span></div>
+        <div class="tile static"><span class="big tnum">${hv ? Math.round(hv.hrv.natt_snitt) : "–"}<small> ms</small></span><span class="lab">HRV${hv?.hrv?.status ? ", " + esc(String(hv.hrv.status).toLowerCase()) : ""}</span></div>
+        <div class="tile static"><span class="big tnum">${bb ? Math.round(bb.bb.hoy) : "–"}</span><span class="lab">Body Battery, høyest${bb?.bb?.lav != null ? " (lavest " + Math.round(bb.bb.lav) + ")" : ""}</span></div>
+        <div class="tile static"><span class="big tnum">${S.sri && S.sri.sri != null && !S.sri.mistenkelig ? S.sri.sri.toFixed(0) : "–"}</span><span class="lab">søvnregularitet</span></div>
+      </div>
+      ${dfm.logg ? `<p class="muted" style="font-size:13px;margin:0">${esc(dfm.logg)}</p>` : ""}
+    </div>
+    ${kort("Søvn", x => x.sovn ?? null, fmtT, {label: "Søvnlengde siste 14 dager", min: 0})}
+    ${kort("HRV, natt-snitt", x => x.hrv?.natt_snitt ?? null, v => Math.round(v) + " ms", {label: "HRV siste 14 dager", band: hrvBand}, hrvBand ? `<p class="muted" style="font-size:12px;margin:0">Det grønne feltet er Garmins normalområde for deg (${Math.round(hrvBand[0])} til ${Math.round(hrvBand[1])} ms).</p>` : "")}
+    ${kort("Body Battery, høyeste", x => x.bb?.hoy ?? null, v => String(Math.round(v)), {label: "Body Battery siste 14 dager", min: 0, max: 100})}
+    ${dfm.del.length ? `<p class="muted" style="font-size:13px">${esc(dfm.tekst)} Tallene er hentet fra Garmin. HRV og Body Battery er Garmins egne beregninger, ikke kliniske mål.</p>` : ""}
+    ${vSovn()}
   </div>`;
 }
+
+/* Marked. Markedet utenfor egne posisjoner, hentet ferdig regnet fra
+   MarketAnalyzor (regg92s-hub/MarketAnalyzor) av tools/marketanalyzor.py.
+   Appen regner ikke om score, fase eller roadmaps; den viser dem og legger til
+   endring over dag, uke og måned. Ingenting her leser posisjoner eller trading,
+   og ingenting er råd om å kjøpe eller selge. */
+const FASENAVN = {1: "Bunn", 2: "Opptrend", 3: "Distribusjon", 4: "Nedtrend"};
+const FASEKLASSE = {1: "n", 2: "g", 3: "y", 4: "r"};
+const faseChip = (n, tekst) => n ? `<span class="mac ${FASEKLASSE[n] || "n"}" title="${esc(tekst || "")}">${esc(FASENAVN[n] || ("Fase " + n))}</span>` : "";
+const dTall = (v, suf = "", d = 0) => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toLocaleString("nb-NO", {maximumFractionDigits: d}) + suf;
+const dSpan = (v, suf = "", opt = {}) => v == null ? `<span class="muted">–</span>` : `<span class="tnum ${v === 0 ? "" : (opt.lavtbra ? tone(-v) : tone(v))}">${dTall(v, suf, opt.d || 0)}</span>`;
+const pctF = (v, d = 0) => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toLocaleString("nb-NO", {maximumFractionDigits: d}) + " %";
+function mSpark(sp){
+  if (!Array.isArray(sp) || sp.length < 3) return "";
+  const lo = Math.min(...sp), hi = Math.max(...sp), w = 70, h = 22, d = sp.map((v, i) => (i ? "L" : "M") + (i * w / (sp.length - 1)).toFixed(1) + " " + (hi === lo ? h / 2 : h - 2 - (v - lo) * (h - 4) / (hi - lo)).toFixed(1)).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="${sp[sp.length - 1] >= sp[0] ? "var(--ok)" : "var(--accent)"}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+function vMarked(){
+  const sub = S.mSub === "roadmap" || S.mSub === "screener" || S.mSub === "makro" ? S.mSub : "status";
+  const tabs = `<div class="subtabs">${[["status","Status"],["roadmap","Roadmaps"],["screener","Aksjer"],["makro","Makro og uran"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
+  if (sub === "makro") return `<div class="stack">${tabs}${vMakro()}</div>`;
+  if (sub === "screener") return `<div class="stack">${tabs}${vScreener()}</div>`;
+  const d = S.ma;
+  if (!d || d.status !== "ok") return `<div class="stack">${tabs}<div class="panel stack"><h2>Marked</h2>
+    <p class="muted">Markedsbildet hentes fra MarketAnalyzor i den daglige kjøringen. Første kjøring legger det inn i dag. Aksjer og Makro og uran ligger under fanene over.</p></div></div>`;
+  const gammel = d.gammel_dager > 2 ? `<p class="warn" style="margin:0">MarketAnalyzor-dataene er ${d.gammel_dager} dager gamle. Kjøringen deres har trolig stoppet.</p>` : "";
+  return `<div class="stack">${tabs}${gammel}${sub === "roadmap" ? vRoadmap(d) : vMStatus(d)}</div>`;
+}
+function vMStatus(d){
+  const tl = d.toppliste || [], t = d.trend || {};
+  const nGull = tl.filter(x => x.slaar_gull).length, nF2 = tl.filter(x => x.stage === 2).length;
+  const rader = [
+    ["Makro-score (0 til 100)", d.makro?.score, "makro_score", ""],
+    ["Over 50-dagers (%)", d.bredde?.pct50, "bredde50", ""],
+    ["Over 200-dagers (%)", d.bredde?.pct200, "bredde200", ""],
+    ["Bred bredde, 20 markeder (%)", d.bredde?.global_pct, "global_pct", ""],
+    ["Slår gull (antall)", nGull, "slaar_gull", ""],
+    ["I fase 2, opptrend (antall)", nF2, "fase2", ""],
+  ];
+  const kol = [["dag", "I går"], ["uke", "Uke"], ["maaned", "Måned"]];
+  const mangler = kol.filter(([k]) => t[k]?.mangler).map(([, l]) => l.toLowerCase());
+  const tab = `<table class="mtab"><thead><tr><th></th><th>Nå</th>${kol.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>
+    ${rader.map(([n, naa, key]) => `<tr><td>${n}</td><td><b>${naa == null ? "–" : esc(String(naa))}</b></td>${kol.map(([k]) => `<td>${t[k]?.mangler ? `<span class="muted">–</span>` : dSpan(t[k]?.[key])}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>`;
+  const refTekst = kol.map(([k, l]) => t[k]?.refs?.makro ? `${l.toLowerCase()}: ${esc(t[k].refs.makro)}` : "").filter(Boolean).join(", ");
+  const sj = (d.sjangere || []).slice().sort((a, b) => (a.rang ?? 99) - (b.rang ?? 99));
+  const sjEnd = ["uke", "maaned"].flatMap(k => (t[k]?.sjanger_endringer || []).map(x => ({...x, k: k === "uke" ? "siste uke" : "siste måned"})));
+  const stageEnd = (t.uke?.stage_endringer || []);
+  const opp = t.uke?.scoreopp || [], ned = t.uke?.scorener || [];
+  const flyt = d.pengestrom || {}, kap = d.kapital || {}, sektor = d.sektorflyt || [];
+  const sek = ["Ro", "Korreksjon", "Kapitulasjon", "Stabilisering", "Bekreftelse"];
+  return `
+  <div class="panel stack">
+    <div class="spread"><h2>Status</h2><span class="muted tnum" style="font-size:13px">${esc(d.kilde_dato || d.date)}</span></div>
+    <p>${esc(d.verdikt || "")}</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <span class="mac ${/risk-off|defensiv/i.test(d.makro?.regime || "") ? "r" : /risk-on|offensiv/i.test(d.makro?.regime || "") ? "g" : "y"}">${esc(d.makro?.regime || "Regime ukjent")}</span>
+      ${flyt.tilstand ? `<span class="mac ${/off/i.test(flyt.tilstand) ? "r" : /on/i.test(flyt.tilstand) ? "g" : "y"}">Pengestrøm: ${esc(flyt.tilstand)}</span>` : ""}
+      ${d.bredde?.global_tilstand ? `<span class="mac n">${esc(d.bredde.global_tilstand)}</span>` : ""}
+    </div>
+  </div>
+  <div class="panel stack">
+    <div class="spread"><h2>Utvikling</h2><span class="muted" style="font-size:12px">endring mot</span></div>
+    ${tab}
+    <p class="muted" style="font-size:12px;margin:0">${mangler.length ? "Ikke nok historikk ennå for " + mangler.join(" og ") + ". " : ""}Sammenlignet med nærmeste tilgjengelige dato: ${refTekst || "ingen"}.${t.uke?.regime_fra ? ` Regimet for en uke siden: ${esc(t.uke.regime_fra)}.` : ""}</p>
+  </div>
+  <div class="panel stack">
+    <h2>Sjangere</h2>
+    <div class="notes">${sj.map(g => `<div class="lrow"><div class="lco"><b>${esc(g.sjanger)}</b><span class="muted">${g.n} instrumenter</span></div>
+      <div class="lt"><div class="row" style="gap:10px;align-items:center"><div class="bar" style="flex:1" aria-label="Relativ styrke ${g.styrke ?? 0} av 100"><i style="width:${Math.max(2, Math.min(100, g.styrke ?? 0))}%"></i></div><span class="tnum" style="min-width:30px;text-align:right">${g.styrke ?? "–"}</span></div>
+      <div class="muted" style="font-size:12px">${esc(g.tilstand || "")}</div></div></div>`).join("")}</div>
+    ${sjEnd.length ? `<div class="eyebrow">Skifter</div><div class="notes">${sjEnd.map(x => `<div class="note"><span class="d">${x.k}</span><span><b>${esc(x.sjanger)}</b>: ${esc(x.fra)} til ${esc(x.til)}</span></div>`).join("")}</div>` : `<p class="muted" style="font-size:13px;margin:0">Ingen sjanger har skiftet tilstand siste uke.</p>`}
+    <p class="muted" style="font-size:12px;margin:0">Styrke er MarketAnalyzors relative rangering av sjangeren mot de andre (100 er sterkest).</p>
+  </div>
+  ${stageEnd.length || opp.length || ned.length ? `<div class="panel stack"><h2>Hva som har flyttet seg siste uke</h2>
+    ${stageEnd.length ? `<div class="eyebrow">Fasebytter · ${t.uke.antall_stage_endringer}</div><div class="notes">${stageEnd.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.navn)}</b></div><div class="lt">${faseChip(x.fra)} <span class="muted">til</span> ${faseChip(x.til)}</div></div>`).join("")}</div>` : ""}
+    ${opp.length ? `<div class="eyebrow">Score opp</div><div class="notes">${opp.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.navn)}</b></div><div class="lt tnum">${x.fra} til ${x.til} <span class="pos">${dTall(x.diff)}</span></div></div>`).join("")}</div>` : ""}
+    ${ned.length ? `<div class="eyebrow">Score ned</div><div class="notes">${ned.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.navn)}</b></div><div class="lt tnum">${x.fra} til ${x.til} <span class="neg">${dTall(x.diff)}</span></div></div>`).join("")}</div>` : ""}
+  </div>` : ""}
+  <div class="panel stack">
+    <h2>Pengestrøm</h2>
+    <p class="muted" style="margin:0">${esc(flyt.note || "")}</p>
+    ${(flyt.inn || []).length || (flyt.ut || []).length ? `<div class="cols"><div class="stack"><div class="eyebrow">Inn (3 mnd)</div>${(flyt.inn || []).map(x => `<div class="spread"><span>${esc(x.sector)}</span><span class="tnum pos">${pctF(x.roc_3m, 1)}</span></div>`).join("")}</div>
+      <div class="stack"><div class="eyebrow">Ut (3 mnd)</div>${(flyt.ut || []).map(x => `<div class="spread"><span>${esc(x.sector)}</span><span class="tnum neg">${pctF(x.roc_3m, 1)}</span></div>`).join("")}</div></div>` : ""}
+    ${kap.verdikt ? `<p style="margin:0;font-size:14px">${esc(kap.verdikt)}</p>` : ""}
+    ${sektor.length ? `<table class="mtab"><thead><tr><th>Sektor</th><th>1 mnd</th><th>3 mnd</th><th></th></tr></thead><tbody>${sektor.map(x => `<tr><td>${esc(x.sektor)}</td><td>${dSpan(x.roc1m, " %", {d: 1})}</td><td>${dSpan(x.roc3m, " %", {d: 1})}</td><td class="muted" style="font-size:12px">${x.akselererer ? "akselererer" : ""}</td></tr>`).join("")}</tbody></table>` : ""}
+  </div>
+  ${d.sekvens?.tekst ? `<div class="panel stack"><h2>Gull-sekvensen</h2>
+    <div class="row" style="gap:6px;flex-wrap:wrap">${sek.map((s, i) => `<span class="mac ${i === d.sekvens.tilstand ? "y" : "n"}" ${i === d.sekvens.tilstand ? 'aria-current="step"' : ""}>${i + 1}. ${s}</span>`).join("")}</div>
+    <p class="muted" style="margin:0;font-size:14px">${esc(d.sekvens.tekst)}</p></div>` : ""}
+  <p class="muted" style="font-size:12px">Kilde: MarketAnalyzor ${esc(d.versjon || "")}, hentet ${esc(d.kilde_dato || d.date)}. ${esc(d.merknad || "Beskrivelse av markedet, ikke råd om å kjøpe eller selge.")}</p>`;
+}
+const RM_FILTER = [["alle", "Alle"], ["gull", "Slår gull"], ["fase2", "Fase 2"], ["score", "Score 55+"], ["endret", "Endret fase"]];
+const RM_SORT = [["score", "Score"], ["uke", "Endring uke"], ["roc3m", "3 mnd"], ["mansfield", "Mot gull"]];
+function vRoadmap(d){
+  const f = S.rmFilter || "alle", so = S.rmSort || "score";
+  let l = (d.toppliste || []).slice();
+  const filt = {alle: () => true, gull: x => x.slaar_gull, fase2: x => x.stage === 2, score: x => (x.score ?? 0) >= 55, endret: x => x.stage_uke || x.stage_mnd};
+  l = l.filter(filt[f] || filt.alle);
+  const val = {score: x => x.score ?? -1, uke: x => x.d_score_uke ?? -999, roc3m: x => x.roc3m ?? -999, mansfield: x => x.mansfield ?? -999}[so];
+  l.sort((a, b) => val(b) - val(a) || String(a.navn).localeCompare(String(b.navn), "nb"));
+  const vis = S.rmAlle ? l : l.slice(0, 15);
+  return `<div class="panel stack">
+    <div class="spread"><h2>Roadmaps</h2><span class="muted" style="font-size:13px">${l.length} av ${(d.toppliste || []).length} instrumenter</span></div>
+    <div class="chips">${RM_FILTER.map(([k, n]) => `<button class="chip ${f === k ? "sel" : ""}" data-rmf="${k}" aria-pressed="${f === k}">${n}</button>`).join("")}</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="muted" style="font-size:12px">Sorter</span>${RM_SORT.map(([k, n]) => `<button class="btn small ${so === k ? "primary" : ""}" data-rms="${k}">${n}</button>`).join("")}</div>
+    <div class="notes">${vis.map(x => rmRad(x, d)).join("") || `<p class="muted">Ingen instrumenter treffer filteret.</p>`}</div>
+    ${l.length > vis.length ? `<div><button class="btn small" id="rm-alle">Vis alle ${l.length}</button></div>` : (S.rmAlle && l.length > 15 ? `<div><button class="btn small ghost" id="rm-alle">Vis færre</button></div>` : "")}
+    <p class="muted" style="font-size:12px;margin:0">Score er MarketAnalyzors Northstar-lignende skår (0 til 100). Mot gull er Mansfield-styrke relativt til gull. Scenariene er tekniske nivåer fra kanal og støtte, ikke prognoser eller råd.</p>
+  </div>`;
+}
+function rmRad(x, d){
+  const open = S.rmOpen === x.id, r = (d.roadmaps || {})[x.id];
+  const dsc = x.d_score_uke;
+  return `<div class="rmitem"><button class="rmhead" data-rmo="${esc(x.id)}" aria-expanded="${open}">
+    <span class="lco"><b>${esc(x.navn)}</b><span class="muted">${esc(x.sym)} · ${esc(x.sektor || "")}</span></span>
+    <span class="rmmid">${faseChip(x.stage, x.stage_tekst)}${x.slaar_gull ? `<span class="mac g">Slår gull</span>` : ""}${x.strukket ? `<span class="mac y">Strukket</span>` : ""}${x.breakout ? `<span class="mac g">Brudd</span>` : ""}</span>
+    <span class="rmend">${mSpark(x.spark)}<span class="tnum"><b>${x.score ?? "–"}</b>${dsc != null && dsc !== 0 ? ` <span class="${tone(dsc)}" style="font-size:12px">${dTall(dsc)}</span>` : ""}</span></span></button>
+    ${open ? rmDetalj(x, r) : ""}</div>`;
+}
+function rmDetalj(x, r){
+  const sc = r?.scenarier || {}, fm = n => n == null ? "–" : Number(n).toLocaleString("nb-NO", {maximumFractionDigits: n < 10 ? 3 : 2});
+  const niv = (arr) => (arr || []).map(p => `${fm(p.pris)}${p.berort ? ` <span class="muted">(${p.berort}x)</span>` : ""}`).join(", ") || "–";
+  return `<div class="rmdet stack">
+    <div class="kv">
+      <div>Score<b>${x.score ?? "–"}${x.d_score_uke != null ? ` <span class="${tone(x.d_score_uke)}" style="font-size:12px">${dTall(x.d_score_uke)} uke</span>` : ""}${x.d_score_mnd != null ? ` <span class="${tone(x.d_score_mnd)}" style="font-size:12px">${dTall(x.d_score_mnd)} mnd</span>` : ""}</b></div>
+      <div>Kurs<b>${fm(r?.siste)}</b></div>
+      <div>3 mnd<b class="${tone(x.roc3m)}">${pctF(x.roc3m, 1)}</b></div>
+      <div>Mot gull<b class="${tone(x.mansfield)}">${x.mansfield == null ? "–" : dTall(x.mansfield, "", 1)}</b></div>
+      <div>Fra 36-snitt<b>${pctF(x.dist36, 1)}</b></div>
+      <div>Fra 52u-topp<b>${pctF(x.fra52, 1)}</b></div>
+      <div>Volatilitet<b>${x.vol == null ? "–" : x.vol.toLocaleString("nb-NO", {maximumFractionDigits: 1}) + " %"}</b></div>
+    </div>
+    <div class="row" style="gap:6px;flex-wrap:wrap">${faseChip(x.stage, x.stage_tekst)} <span class="muted" style="font-size:13px">${esc(x.stage_tekst || "")}</span>
+      ${x.stage_uke ? `<span class="muted" style="font-size:13px">· var ${esc(FASENAVN[x.stage_uke])} for en uke siden</span>` : ""}${x.stage_mnd ? `<span class="muted" style="font-size:13px">· var ${esc(FASENAVN[x.stage_mnd])} for en måned siden</span>` : ""}</div>
+    ${r ? `<div class="kv">
+      <div>Trend<b>${esc(({bull: "Opp", bear: "Ned", neutral: "Flat"})[r.trend] || r.trend || "–")}</b></div>
+      <div>Skyen<b>${esc(({above: "Over", below: "Under", inside: "Inni"})[r.sky] || r.sky || "–")}</b></div>
+      <div>Kanal<b>${r.kanal ? (r.kanal.stigende ? "Stigende" : "Fallende") + " (R² " + r.kanal.r2 + ")" : "–"}</b></div>
+      <div>Mot gull<b>${r.gull ? esc(({bull: "Opp", bear: "Ned", neutral: "Flat"})[r.gull.trend] || "–") + ", " + esc(({above: "over", below: "under", inside: "inni"})[r.gull.sky] || "") + " skyen" : "–"}</b></div>
+    </div>
+    <div class="kv"><div>Støtte<b>${niv(r.stotte)}</b></div><div>Motstand<b>${niv(r.motstand)}</b></div><div>Ugyldig under<b>${fm(r.invalidering)}</b></div>${r.measured_move ? `<div>Målt trekk<b>${fm(r.measured_move)}</b></div>` : ""}</div>
+    ${sc.bull || sc.base || sc.bear ? `<table class="mtab"><thead><tr><th>Scenario</th><th>Mål</th><th>Fra nå</th><th>Utløser</th></tr></thead><tbody>
+      ${[["bull", "Opp"], ["base", "Basis"], ["bear", "Ned"]].filter(([k]) => sc[k]).map(([k, n]) => `<tr><td>${n}</td><td>${fm(sc[k].maal)}</td><td>${dSpan(sc[k].pct, " %", {d: 1})}</td><td class="muted">${sc[k].utloeser != null ? fm(sc[k].utloeser) : "–"}</td></tr>`).join("")}</tbody></table>` : ""}` : `<p class="muted" style="font-size:13px">Ingen roadmap-data for dette instrumentet.</p>`}
+    ${x.hvorfor ? `<p class="muted" style="font-size:13px;margin:0">${esc(x.hvorfor)}</p>` : ""}
+  </div>`;
+}
+/* Aksjer. Vekst og verdi fra MarketAnalyzors ukentlige screener, pluss en
+   Minervini-sjekk (SEPA) av de leddene dataene dekker: EPS og omsetning opp
+   minst 25 prosent år over år, fortsatt vekst siste kvartal, lønnsomhet og
+   opptrend. Marginutvikling, ROE og relativ styrke-rangering finnes ikke i
+   dataene og telles ikke. Omsetning rapporteres kvartalsvis, så kvartal over
+   kvartal er den finest oppløsningen som finnes. */
+const SC_TABS = [["vekst", "Vekst"], ["verdi", "Verdi"], ["minervini", "Minervini"]];
+const SC_SORT = {
+  vekst: [["omsetning_yoy", "Omsetning å/å"], ["omsetning_qoq", "Omsetning kvartal"], ["eps_yoy", "EPS å/å"], ["margin", "Margin"]],
+  verdi: [["peg", "PEG (lavest)"], ["oppside", "Kursmål-oppside"], ["omsetning_yoy", "Omsetning å/å"], ["eps_yoy", "EPS å/å"]],
+  minervini: [["mv", "Treff"], ["omsetning_yoy", "Omsetning å/å"], ["eps_yoy", "EPS å/å"]],
+};
+function scVal(x, k){
+  if (k === "mv") return x.minervini ? x.minervini.ok : -1;
+  const m = {omsetning_yoy: x.rev_yoy, omsetning_qoq: x.rev_qoq, eps_yoy: x.eps_yoy, margin: x.margin, peg: x.peg, oppside: x.oppside}[k];
+  return m;
+}
+function vScreener(){
+  const d = S.scr;
+  if (!d || !(d.aksjer || []).length) return `<div class="panel stack"><h2>Aksjer</h2><p class="muted">Aksje-screeneren hentes fra MarketAnalyzor (ukentlig). Første kjøring legger den inn i dag.</p></div>`;
+  const tab = SC_TABS.some(t => t[0] === S.scTab) ? S.scTab : "vekst";
+  const sorter = SC_SORT[tab], so = sorter.some(t => t[0] === S.scSort) ? S.scSort : sorter[0][0];
+  let l = d.aksjer.slice();
+  if (tab === "vekst") l = l.filter(x => (x.lister || []).includes("vekst"));
+  if (tab === "verdi") l = l.filter(x => (x.lister || []).includes("verdi"));
+  const lav = so === "peg";
+  l = l.filter(x => !lav || (x.peg != null && x.peg > 0));
+  l.sort((a, b) => { const x = scVal(a, so), y = scVal(b, so); if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return lav ? x - y : y - x; });
+  const alder = d.date ? dayNum() - dayNum(d.date) : null;
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>Aksjer</h2><span class="muted tnum" style="font-size:13px">${esc(d.date || "")}${alder != null && alder > 9 ? ` · ${alder} d gammel` : ""}</span></div>
+      <div class="subtabs">${SC_TABS.map(([k, n]) => `<button class="btn small ${tab === k ? "primary" : ""}" data-sct="${k}">${n}</button>`).join("")}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="muted" style="font-size:12px">Sorter</span>${sorter.map(([k, n]) => `<button class="btn small ${so === k ? "primary" : ""}" data-scs="${k}">${n}</button>`).join("")}</div>
+      <p class="muted" style="font-size:13px;margin:0">${tab === "vekst" ? "Selskapene med sterkest vekst i omsetning og fortjeneste." : tab === "verdi" ? "Selskaper som scorer på verdi: lav PEG, kursmål over kurs og solid drift." : "Alle selskapene, sortert på hvor mange av Minervinis fundamentale og tekniske ledd de oppfyller."} ${l.length} selskaper.</p>
+      <div class="notes">${l.map(scRad).join("") || `<p class="muted">Ingen selskaper i denne listen.</p>`}</div>
+    </div>
+    <p class="muted" style="font-size:12px">Skannet ${d.skannet ?? "?"} selskaper (univers ${d.univers ?? "?"}); bare de som havner på MarketAnalyzors topp-lister er med her. Omsetning rapporteres kvartalsvis, så månedlig vekst finnes ikke; kvartal over kvartal er den finest mulige. Beskrivelse av hva som treffer kriteriene, ikke råd om å kjøpe eller selge.</p>
+  </div>`;
+}
+function scRad(x){
+  const open = S.scOpen === x.ticker, mv = x.minervini || {};
+  const farge = mv.kjent ? (mv.ok >= 6 ? "g" : mv.ok >= 4 ? "y" : "n") : "n";
+  return `<div class="rmitem"><button class="rmhead" data-sco="${esc(x.ticker)}" aria-expanded="${open}">
+    <span class="lco"><b>${esc(x.navn || x.ticker)}</b><span class="muted">${esc(x.ticker)} · ${esc(x.land || "")} · ${esc(x.sektor || "")}</span></span>
+    <span class="rmmid"><span class="tnum" style="font-size:13px">Oms. ${pctF(x.rev_yoy)} å/å, ${pctF(x.rev_qoq)} kv.</span></span>
+    <span class="rmend"><span class="tnum" style="font-size:13px">EPS ${pctF(x.eps_yoy)}</span><span class="mac ${farge}">${mv.ok ?? "–"}/${mv.av ?? 7}</span></span></button>
+    ${open ? `<div class="rmdet stack">
+      <div class="kv">
+        <div>Omsetning å/å<b class="${tone(x.rev_yoy)}">${pctF(x.rev_yoy, 1)}</b></div><div>Omsetning kvartal<b class="${tone(x.rev_qoq)}">${pctF(x.rev_qoq, 1)}</b></div>
+        <div>EPS å/å<b class="${tone(x.eps_yoy)}">${pctF(x.eps_yoy, 1)}</b></div><div>EPS kvartal<b class="${tone(x.eps_qoq)}">${pctF(x.eps_qoq, 1)}</b></div>
+        <div>Margin<b>${x.margin == null ? "–" : x.margin.toLocaleString("nb-NO", {maximumFractionDigits: 1}) + " %"}</b></div><div>PEG<b>${x.peg == null ? "–" : x.peg.toLocaleString("nb-NO", {maximumFractionDigits: 2})}</b></div>
+        <div>Kursmål-oppside<b>${pctF(x.oppside, 0)}</b></div><div>Fra 200-dagers<b>${pctF(x.dist200, 1)}</b></div>
+        <div>Gjeld/EK<b>${x.de == null ? "–" : x.de.toLocaleString("nb-NO", {maximumFractionDigits: 2})}</b></div><div>Verdi<b>${x.mcap == null ? "–" : (x.mcap / 1e9).toLocaleString("nb-NO", {maximumFractionDigits: 1}) + " mrd " + esc(x.valuta || "")}</b></div>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap">${faseChip(x.stage, x.stage_tekst)}<span class="muted" style="font-size:13px">${esc(x.stage_tekst || "")}</span>${x.ask ? `<span class="mac n">Kan holdes i aksjesparekonto</span>` : ""}</div>
+      <div class="eyebrow">Minervini · ${mv.ok}/${mv.av} (${mv.kjent} av ${mv.av} ledd kjent)</div>
+      <div class="notes">${(mv.sjekker || []).map(s => `<div class="lrow"><div class="lco">${esc(s.navn)}</div><div class="lt"><span class="mac ${s.ok === true ? "g" : s.ok === false ? "r" : "n"}">${s.ok === true ? "Ja" : s.ok === false ? "Nei" : "Ukjent"}</span></div></div>`).join("")}</div>
+      ${x.innsidekjop ? `<p class="muted" style="font-size:13px;margin:0">Innsidekjøp: ${esc(typeof x.innsidekjop === "string" ? x.innsidekjop : JSON.stringify(x.innsidekjop))}</p>` : ""}
+    </div>` : ""}</div>`;
+}
+
+/* ---------- verktøy ---------- */
+function vTools(){
+  const sub = ["trading","kokk","gitar"].includes(S.vkSub) ? S.vkSub : "trading";
+  const tabs = `<div class="subtabs">${[["trading","Trading"],["kokk","Kokk"],["gitar","Gitar"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-vksub="${k}">${l}</button>`).join("")}</div>`;
+  const body = sub === "kokk" ? vKitchen() : sub === "gitar" ? vGuitar() : vTrading();
+  return `<div class="stack">${tabs}${body}</div>`;
+}
+
+/* ---------- rapport: uke og måned ---------- */
+function vRapport(){
+  const sub = S.rapSub === "maaned" ? "maaned" : "uke";
+  const tabs = `<div class="subtabs">${[["uke","Uke"],["maaned","Måned"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-rapsub="${k}">${l}</button>`).join("")}</div>`;
+  return `<div class="stack">${tabs}${sub === "maaned" ? vMaaned() : vUke()}</div>`;
+}
+/* Månedlig sammendrag. Tallene er regnet av tools/maaned.py fra det som er loggført
+   og hentet. Et tall uten data den måneden er utelatt og vises som «–», aldri
+   som 0. Måneden som pågår er ikke sammenlignbar med en hel måned i antall. */
+const MND = [
+  ["Trading", [["trades","Lukkede handler","n"],["samlet_r","Samlet R","R"],["snitt_r","Snitt R per handel","R"],["regelbrudd","Regelbrudd","n",true],["maaned_pct","Månedsavkastning","%"]]],
+  ["Søvn og form", [["sovn_min","Søvn per natt","t"],["sri","Søvnregularitet","n"],["netter_under_6t","Netter under 6 t","n",true],["hrv","HRV, snitt","ms"],["bb_hoy","Body Battery, høyeste","n"]]],
+  ["Læring", [["repetisjoner","Repetisjoner","n"],["bom_pct","Andel bom","%",true],["aktive_dager_laering","Dager med læring","n"]]],
+  ["Marked", [["fase_skift","Instrumenter som skiftet fase","n"],["makro_snitt","Makro-score, snitt","n"]]],
+  ["Journal og refleksjon", [["journalfoeringer","Uker med journal","n"],["journal_enjoyment","Enjoyment","n"],["journal_satisfaction","Satisfaction","n"],["journal_meaning","Meaning","n"],["nye_notater","Nye notater","n"],["debriefer_arkivert","Debriefer arkivert","n"]]],
+  ["Informasjon", [["studier","PubMed-treff","n"],["studier_lagret","Lagrede studier","n"],["selskapsmeldinger","Selskapsmeldinger","n"]]],
+  ["Verktøy", [["retter_laget","Retter laget","n"],["gitaroekter","Gitarøkter","n"],["endringer_loggfoert","Endringer loggført","n"],["forsoksdager","Forsøksdager","n"]]],
+];
+function mndVis(v, enhet){
+  if (v == null) return "–";
+  if (enhet === "t") return fmtT(v);
+  const n = Number(v).toLocaleString("nb-NO", {maximumFractionDigits: Math.abs(v) < 10 && !Number.isInteger(v) ? 2 : 1});
+  return enhet === "%" ? n + " %" : enhet === "R" ? n + " R" : enhet === "ms" ? n + " ms" : n;
+}
+function vMaaned(){
+  const liste = (S.maaneder || []).slice().sort((a, b) => String(b.maaned).localeCompare(String(a.maaned)));
+  if (!liste.length) return `<div class="panel stack"><h2>Månedlig sammendrag</h2><p class="muted">Ingen månedsrapport ennå. Den regnes ut i den daglige kjøringen av det du har loggført og det som er hentet.</p></div>`;
+  const valgt = liste.find(m => m.maaned === S.mnd) || liste[0];
+  const i = liste.indexOf(valgt), forrige = liste[i + 1] || null;
+  const hist = liste.slice(i, i + 6).reverse();      // eldst først, ender på valgt måned
+  const navn = ym => { const [y, m] = ym.split("-").map(Number); return new Intl.DateTimeFormat("nb-NO", {month: "long", year: "numeric", timeZone: "UTC"}).format(new Date(Date.UTC(y, m - 1, 1))); };
+  const delvis = !valgt.ferdig;
+  const grupper = MND.map(([g, felt]) => {
+    const rader = felt.filter(([k]) => valgt.nokkeltall?.[k] != null || forrige?.nokkeltall?.[k] != null).map(([k, n, enhet, lavt]) => {
+      const v = valgt.nokkeltall?.[k], f = forrige?.nokkeltall?.[k], dl = v != null && f != null ? v - f : null;
+      const serie = hist.map(m => m.nokkeltall?.[k] ?? null);
+      return `<div class="lrow"><div class="lco"><b>${n}</b></div><div class="lt"><div class="row" style="gap:12px;align-items:center;justify-content:space-between">
+        <span class="tnum"><b>${mndVis(v, enhet)}</b>${dl != null && dl !== 0 && !delvis ? ` <span class="${lavt ? tone(-dl) : tone(dl)}" style="font-size:12px">${dl > 0 ? "+" : "−"}${mndVis(Math.abs(dl), enhet)}</span>` : ""}</span>
+        <span style="width:90px;flex:none">${serie.filter(x => x != null).length >= 3 ? miniChart(serie, {w: 90, h: 24, label: n + " siste måneder"}) : ""}</span></div></div></div>`;
+    }).join("");
+    return rader ? `<div class="panel stack"><h2 style="font-size:17px">${g}</h2><div class="notes">${rader}</div></div>` : "";
+  }).join("");
+  const tr = valgt.trading || {}, fe = valgt.feed || {}, db = valgt.debriefer || {};
+  const ekstra = [
+    tr.lukkede ? `Handler: ${tr.vinnere} vinnere og ${tr.tapere} tapere${tr.beste_r != null ? `, beste ${dTall(tr.beste_r, " R", 1)}, verste ${dTall(tr.verste_r, " R", 1)}` : ""}.` : "",
+    (fe.mest_omtalt || []).length ? `Mest omtalt: ${fe.mest_omtalt.map(x => esc(x.selskap) + " (" + x.antall + ")").join(", ")}.` : "",
+    (db.gjengangere || []).length ? `Gjengangere i debriefene: ${db.gjengangere.map(x => esc(x.ord) + " (" + x.uker + " uker)").join(", ")}.` : "",
+  ].filter(Boolean);
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>Månedlig sammendrag</h2>${delvis ? `<span class="pill warn">Pågår, dag ${valgt.dager_regnet} av ${valgt.dager_i_maaneden}</span>` : `<span class="pill ok">Ferdig</span>`}</div>
+      <div class="chips">${liste.slice(0, 8).map(m => `<button class="chip ${m.maaned === valgt.maaned ? "sel" : ""}" data-mnd="${esc(m.maaned)}" aria-pressed="${m.maaned === valgt.maaned}">${esc(navn(m.maaned))}</button>`).join("")}</div>
+      <p class="muted" style="font-size:13px;margin:0">${esc(valgt.fra)} til ${esc(valgt.til)}. ${delvis ? "Måneden er ikke ferdig, så antall er ikke sammenlignbare med forrige måned og endringene vises ikke." : forrige ? "Endring er mot " + esc(navn(forrige.maaned)) + "." : "Ingen måned før denne å sammenligne med."} Linjene viser inntil seks måneder og tegnes fra tre.</p>
+    </div>
+    ${grupper || `<div class="empty"><b>Ingen tall for denne måneden.</b></div>`}
+    ${ekstra.length ? `<div class="panel stack"><h2 style="font-size:17px">Utdrag</h2>${ekstra.map(t => `<p style="margin:0;font-size:14px">${t}</p>`).join("")}</div>` : ""}
+    <p class="muted" style="font-size:12px">Regnet av kjøringen fra loggene i repoet. Ingenting er anslått. Et tall som mangler betyr at det ikke fantes data, ikke at det var null.</p>
+  </div>`;
+}
+/* Før og etter for loggførte endringer. Grov pekepinn, ikke et forsøk: samtidige
+   endringer, årstid og vanlig variasjon kan være forklaringen. */
+function effektPanel(){
+  const e = S.effekt, rader = (e?.rader || []).slice().sort((a, b) => String(b.dato).localeCompare(String(a.dato)));
+  if (!rader.length) return "";
+  const tekst = {opp: "høyere", ned: "lavere", ikke_skillbar: "ikke skillbar fra ingen endring", for_tynt: "for lite data ennå"};
+  const vis = (m, v) => m.enhet === "min" ? fmtT(v) : Number(v).toLocaleString("nb-NO", {maximumFractionDigits: 1}) + " " + m.enhet;
+  return `<div class="panel stack"><div class="spread"><h2>Før og etter</h2><span class="muted" style="font-size:12px">${e.vindu_dager || 14} dager på hver side</span></div>
+    <div class="notes">${rader.slice(0, 12).map(r => `<div class="stack" style="gap:4px;padding:10px 0;border-bottom:1px solid var(--line)"><div><b>${esc(r.tekst || "")}</b> <span class="muted" style="font-size:12px">${esc(r.dato)}${r.ferdig ? "" : " · pågår"}</span></div>
+      ${Object.values(r.maal || {}).filter(m => m.n_foer || m.n_etter).map(m => m.status === "for_tynt"
+        ? `<div class="muted" style="font-size:13px">${esc(m.navn)}: for lite data ennå (${m.n_foer} før, ${m.n_etter} etter)</div>`
+        : `<div style="font-size:13px">${esc(m.navn)}: ${vis(m, m.foer)} til ${vis(m, m.etter)} <span class="${m.status === "opp" ? "pos" : m.status === "ned" ? "neg" : "muted"}">(${m.diff > 0 ? "+" : "−"}${vis(m, Math.abs(m.diff))}, ${tekst[m.status]})</span> <span class="muted">95 % intervall ${dTall(m.lo, "", 1)} til ${dTall(m.hi, "", 1)}</span></div>`).join("")}</div>`).join("")}</div>
+    <p class="muted" style="font-size:12px;margin:0">${esc(e.metode || "Før og etter er ikke et forsøk.")} Ting som skjedde samtidig kan forklare forskjellen. Bruk Forsøk for et tilfeldig tildelt svar.</p></div>`;
+}
+
+/* ---------- handleliste fra oppskriftene ---------- */
+const ENHET = {g: "g", gram: "g", kg: "kg", dl: "dl", l: "l", liter: "l", ml: "ml", cl: "cl", ss: "ss", ts: "ts", stk: "stk", pk: "pk", pakke: "pk", boks: "boks", fedd: "fedd", klype: "klype", neve: "neve", skive: "skiver", skiver: "skiver", bunt: "bunt", pose: "pose", glass: "glass", bit: "biter", biter: "biter"};
+const BRK = {"½": 0.5, "¼": 0.25, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3};
+function parseIng(s){
+  let t = String(s || "").trim().replace(/^[-•*·]\s*/, "").replace(/\s+/g, " ");
+  if (!t) return null;
+  let mengde = null, rest = t;
+  const brok = x => /^\d+\/\d+$/.test(x) ? Number(x.split("/")[0]) / Number(x.split("/")[1]) : BRK[x] ?? null;
+  const toks = t.split(" ");
+  let i = 0, sum = 0, fant = false;
+  // 1, 1,5, 1/2, ½, 1 1/2, 1½ og intervall som 2-3 (øvre grense)
+  for (; i < toks.length; i++) {
+    let x = toks[i].replace(",", ".");
+    if (/^\d+(\.\d+)?-\d+(\.\d+)?$/.test(x)) { sum += Number(x.split("-")[1]); fant = true; i++; break; }
+    if (/^\d+(\.\d+)?$/.test(x)) { if (fant && sum % 1 !== 0) break; sum += Number(x); fant = true; continue; }
+    if (/^\d+[½¼¾⅓⅔]$/.test(x)) { sum += Number(x.slice(0, -1)) + BRK[x.slice(-1)]; fant = true; i++; break; }
+    const b = brok(x); if (b !== null && !/^\d+\.\d+$/.test(x)) { sum += b; fant = true; i++; break; }
+    break;
+  }
+  if (fant) { mengde = sum; rest = toks.slice(i).join(" "); }
+  let enhet = null;
+  const m = rest.match(/^([a-zæøåA-ZÆØÅ]+)\.?\s+(.*)$/);
+  if (mengde !== null && m && ENHET[m[1].toLowerCase()]) { enhet = ENHET[m[1].toLowerCase()]; rest = m[2]; }
+  else if (mengde !== null) { const m2 = rest.match(/^([a-zæøåA-ZÆØÅ]+)$/); if (m2 && ENHET[m2[1].toLowerCase()]) { enhet = ENHET[m2[1].toLowerCase()]; rest = ""; } }
+  rest = rest.replace(/^(av|of)\s+/i, "").trim();
+  const navn = rest.split(",")[0].trim().toLowerCase().replace(/\s+/g, " ");
+  return {mengde, enhet, navn: navn || t.toLowerCase(), rest: rest || t};
+}
+function normEnhet(m, e){
+  if (m == null) return [null, e];
+  if (e === "kg") return [m * 1000, "g"];
+  if (e === "l") return [m * 1000, "ml"];
+  if (e === "dl") return [m * 100, "ml"];
+  if (e === "cl") return [m * 10, "ml"];
+  return [m, e];
+}
+function visMengde(m, e){
+  if (m == null) return "";
+  if (e === "g") return m >= 1000 ? (m / 1000).toLocaleString("nb-NO", {maximumFractionDigits: 2}) + " kg" : Math.round(m) + " g";
+  if (e === "ml") return m >= 1000 ? (m / 1000).toLocaleString("nb-NO", {maximumFractionDigits: 2}) + " l" : m >= 100 && m % 100 === 0 ? (m / 100) + " dl" : Math.round(m) + " ml";
+  return Number(m.toFixed(2)).toLocaleString("nb-NO") + (e ? " " + e : "");
+}
+function handleliste(valg){
+  // valg: [{ingredienser: [..], faktor}]. Samme vare og enhet slås sammen.
+  const per = new Map();
+  for (const v of valg) for (const linje of v.ingredienser || []) {
+    const p = parseIng(linje); if (!p) continue;
+    const [m, e] = normEnhet(p.mengde !== null ? p.mengde * v.faktor : null, p.enhet);
+    const nokkel = p.navn + "|" + (e || "");
+    const x = per.get(nokkel) || {navn: p.navn, enhet: e, mengde: null, antall: 0, tekst: p.rest};
+    if (m !== null) x.mengde = (x.mengde || 0) + m;
+    x.antall++;
+    per.set(nokkel, x);
+  }
+  return [...per.values()].sort((a, b) => a.navn.localeCompare(b.navn, "nb")).map(x => ({...x, vis: (visMengde(x.mengde, x.enhet) + " " + x.navn).trim(), nokkel: x.navn + "|" + (x.enhet || "")}));
+}
+function vHandle(){
+  const valgt = new Set(S.shopSel || []), ferdig = new Set(S.shopDone || []);
+  const grunn = r => { const n = parseFloat(String(r.servings || "").replace(",", ".")); return n > 0 ? n : null; };
+  const faktorer = S.shopPort || {};
+  const val = S.recipes.filter(r => valgt.has(r.id)).map(r => { const g = grunn(r), onsk = Number(faktorer[r.id]) || g; return {ingredienser: r.ingredients || [], faktor: g && onsk ? onsk / g : 1}; });
+  const liste = handleliste(val);
+  return `<div class="spread"><h2>Handleliste</h2><button class="btn ghost small" id="back">Tilbake</button></div>
+    <div class="panel stack"><div class="eyebrow">Velg oppskrifter</div>
+    ${S.recipes.length ? `<div class="notes">${S.recipes.map(r => `<label class="lrow" style="cursor:pointer"><span class="lco"><b>${esc(r.title || "Uten navn")}</b><span class="muted">${(r.ingredients || []).length} ingredienser${grunn(r) ? " · " + grunn(r) + " porsjoner" : ""}</span></span>
+      <span class="lt row" style="gap:10px;align-items:center"><input type="checkbox" data-shopsel="${esc(r.id)}" ${valgt.has(r.id) ? "checked" : ""} aria-label="Ta med ${esc(r.title || "oppskriften")}">${valgt.has(r.id) && grunn(r) ? `<input class="txt" style="width:70px" type="number" min="1" max="50" step="1" data-shopport="${esc(r.id)}" value="${esc(String(faktorer[r.id] || grunn(r)))}" aria-label="Porsjoner"><span class="muted" style="font-size:12px">porsjoner</span>` : ""}</span></label>`).join("")}</div>` : `<p class="muted">Ingen oppskrifter ennå.</p>`}</div>
+    ${valgt.size ? `<div class="panel stack"><div class="spread"><h2 style="font-size:17px">Å kjøpe · ${liste.length}</h2><button class="btn small" id="shopcopy">Kopier</button></div>
+      <div class="notes">${liste.map(x => `<label class="lrow" style="cursor:pointer;opacity:${ferdig.has(x.nokkel) ? .45 : 1}"><span class="lt">${ferdig.has(x.nokkel) ? "<s>" : ""}${esc(x.vis)}${ferdig.has(x.nokkel) ? "</s>" : ""}${x.antall > 1 ? ` <span class="muted" style="font-size:12px">(${x.antall} oppskrifter)</span>` : ""}</span><span class="lt"><input type="checkbox" data-shopdone="${esc(x.nokkel)}" ${ferdig.has(x.nokkel) ? "checked" : ""} aria-label="Handlet ${esc(x.navn)}"></span></label>`).join("")}</div>
+      <p class="muted" style="font-size:12px;margin:0">Mengder med samme vare og enhet er slått sammen, og dl, cl og l regnes om til ml. Linjer uten mengde (som «salt») står som de er. Sjekk alltid mot det du har hjemme.</p></div>` : ""}`;
+}
+
+/* ---------- I dag: kalender, dagsform og markedspuls ---------- */
+function kalCard(){
+  const k = S.kal; if (!k || !(k.avtaler || []).length) return "";
+  const idag = osloDate(), i = k.avtaler.filter(a => a.dag === idag), senere = k.avtaler.filter(a => a.dag > idag);
+  if (!i.length && !senere.length) return "";
+  const dagNavn = d => { const diff = dayNum(d) - dayNum(); return diff === 1 ? "I morgen" : new Intl.DateTimeFormat("nb-NO", {weekday: "long", timeZone: "UTC"}).format(new Date(d + "T12:00:00Z")); };
+  const rad = a => `<div class="lrow"><div class="lco tnum"><b>${a.heldag ? "Hele dagen" : esc(a.start) + (a.slutt ? "–" + esc(a.slutt) : "")}</b></div><div class="lt">${esc(a.tittel)}${a.sted ? ` <span class="muted" style="font-size:12px">· ${esc(a.sted)}</span>` : ""}</div></div>`;
+  return `<div class="panel stack"><div class="spread"><span class="eyebrow">Avtaler i dag</span><span class="muted" style="font-size:12px">${i.length} i dag</span></div>
+    ${i.length ? `<div class="notes">${i.map(rad).join("")}</div>` : `<p class="muted" style="margin:0">Ingen avtaler i dag.</p>`}
+    ${senere.length ? `<details><summary class="muted" style="font-size:13px;cursor:pointer">Neste to dager · ${senere.length}</summary><div class="notes">${senere.map(a => `<div class="muted" style="font-size:12px;padding-top:8px">${dagNavn(a.dag)}</div>${rad(a)}`).join("")}</div></details>` : ""}</div>`;
+}
+function dagsformCard(){
+  const f = dagsform();
+  if (!f.tekst && !f.logg) return "";
+  return `<button class="panel" data-go="helse" data-hsub="form" style="width:100%;text-align:left;cursor:pointer;border:1px solid var(--line)">
+    <div class="eyebrow">Dagsform</div>${f.tekst ? `<div style="font-size:15px">${esc(f.tekst)}</div>` : ""}${f.logg ? `<div class="muted" style="font-size:13px">${esc(f.logg)}</div>` : ""}</button>`;
+}
+function marketPulse(){
+  const d = S.ma; if (!d || d.status !== "ok") return "";
+  const t = d.trend?.uke, dm = t && !t.mangler ? t.makro_score : null;
+  return `<button class="panel market-pulse" data-go="marked" style="width:100%;text-align:left;cursor:pointer;border:1px solid var(--line)">
+    <div class="eyebrow">Marked</div><div style="font-size:15px">${esc(d.verdikt || "")}</div>
+    <div class="muted" style="font-size:12px">${d.makro?.regime ? esc(d.makro.regime) : ""}${dm != null ? `, makro-score ${dTall(dm)} siste uke` : ""}. Fra MarketAnalyzor, ikke en anbefaling.</div></button>`;
+}
+
 /* Soevnregularitet. SRI er det beste maalet vi har paa noe du faktisk kan styre:
    Windred et al. (SLEEP 2024, UK Biobank, 60 997 med gyldig skaar) fant 20 til 48
    prosent lavere all-cause doedelighet i de fire oeverste kvintilene (71,6 til
@@ -1252,7 +1679,7 @@ function vDebrief(){
   const maaned = osloDate().slice(0, 7);
   const iMnd = ferdige.filter(x => String(x.til || "").slice(0, 7) === maaned).length;
   if (!d) return `<div class="panel stack"><h2>Ukesdebrief</h2>
-    <p class="muted">Den daglige kjøringen lager grunnlaget når uka er over: navngitte hendelser fra trading, styrke, søvn, meldinger, short, repetisjoner og innboks, og fire spørsmål om dem. Da dukker uka opp her.</p></div>`;
+    <p class="muted">Den daglige kjøringen lager grunnlaget når uka er over: navngitte hendelser fra trading, søvn, meldinger, short, repetisjoner og innboks, og fire spørsmål om dem. Da dukker uka opp her.</p></div>`;
   const svar = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar.svar : (d.svar || {});
   const hs = d.hendelser || [], antall = hs.length;
   const ferdig = d.status === "ferdig";
@@ -1421,108 +1848,6 @@ function maDetail(r){
         ${maSpark(t, lbl)}</div>`; }).join("")}
     <p class="muted" style="font-size:12px;margin:0">${esc(r.ticker || "")}${r.currency ? " · " + esc(r.currency) : ""}${r.first ? " · kurser fra " + esc(r.first.slice(0, 4)) : ""}${r.last_date ? " · siste kurs " + esc(r.last_date.split("-").reverse().join(".")) : ""}</p></div>`;
 }
-/* ---------- Styrke ----------
-   Panelet teller harde sett per muskelgruppe og RIR, ikke tonnasje. Grunnen er
-   at dose-responsmodelleringen til Swinton, Schoenfeld og Murphy (Sports Med
-   2024) forkastet totalvolum som prediktor, mens sett per sesjon holdt, og at
-   Robinson et al. (2024) fant at naerhet til failure driver hypertrofi. e1RM
-   vises med usikkerhetsbaand fordi prediksjonsfeilen er rundt 2,3 kg, og sett
-   med mange repetisjoner gir upaalitelige anslag. */
-const MUSKEL = [
-  [/knebøy|squat|benkbøy|hack/i, "Bein"], [/markløft|deadlift|rdl|stiff/i, "Bakside"],
-  [/legcurl|leg curl|hamstring|nordic/i, "Bakside"], [/legpress|leg press|utfall|lunge|step.?up/i, "Bein"],
-  [/hip ?thrust|rumpe|glute|sete/i, "Sete"], [/benkpress|bench|press.*bryst|dips|flyes|brystpress/i, "Bryst"],
-  [/skulderpress|militær|overhead|ohp|sidehev|lateral/i, "Skulder"], [/nedtrekk|pull.?up|pullup|kroppsheving|chin/i, "Rygg"],
-  [/roing|row|facepull|face pull|shrug/i, "Rygg"], [/curl|biceps/i, "Biceps"],
-  [/triceps|pushdown|skullcrusher|fransk/i, "Triceps"], [/leggpress|tåhev|calf/i, "Legger"],
-  [/plank|mage|crunch|ab ?wheel|hanging|kjerne/i, "Kjerne"],
-];
-const muskel = navn => (MUSKEL.find(([re]) => re.test(navn || "")) || [null, "Annet"])[1];
-const HARD_RIR = 5;        // 0 til 5 RIR regnes som et hardt sett
-const E1RM_MAKS_REPS = 8;  // over dette er e1RM-anslaget for upaalitelig
-const E1RM_SEP = 2.3;      // kg, prediksjonsfeil fra test-retest-litteraturen
-const e1rm = (kg, reps) => (!kg || !reps || reps > E1RM_MAKS_REPS) ? null : Math.round(10 * kg * (1 + reps / 30)) / 10;
-function styrkeTall(logg, idag){
-  // Uke regnes mandag til soendag, i dagnummer. Alt er ren aritmetikk.
-  const uke = d => Math.floor((dayNum(d) - 3) / 7);   // dag 3 = mandag 1970-01-05
-  const naa = uke(idag), sett = [];
-  for (const ø of logg) for (const x of (ø.sett || [])) sett.push({...x, date: ø.date, u: uke(ø.date)});
-  const per = (u, f) => sett.filter(x => x.u === u && f(x));
-  const hard = x => x.rir === null || x.rir === undefined ? false : Number(x.rir) <= HARD_RIR;
-  const grupper = {};
-  for (const x of per(naa, hard)) { const g = muskel(x.ovelse); grupper[g] = (grupper[g] || 0) + 1; }
-  const forrige = {};
-  for (const x of per(naa - 1, hard)) { const g = muskel(x.ovelse); forrige[g] = (forrige[g] || 0) + 1; }
-  const rir = {};
-  for (const x of sett) {
-    if (dayNum(idag) - dayNum(x.date) > 28 || x.rir === null || x.rir === undefined) continue;
-    (rir[x.ovelse] = rir[x.ovelse] || []).push(Number(x.rir));
-  }
-  const snittRir = Object.entries(rir).map(([ovelse, v]) => ({ovelse, rir: Math.round(10 * v.reduce((a, b) => a + b, 0) / v.length) / 10, n: v.length}))
-    .sort((a, b) => b.n - a.n);
-  const e = {};
-  for (const x of sett) { const v = e1rm(Number(x.kg), Number(x.reps)); if (v === null) continue;
-    (e[x.ovelse] = e[x.ovelse] || []).push({date: x.date, v}); }
-  const topp = Object.entries(e).map(([ovelse, v]) => {
-    v.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const siste = v[v.length - 1], gml = v.find(x => dayNum(siste.date) - dayNum(x.date) >= 56) || v[0];
-    const endring = Math.round(10 * (siste.v - gml.v)) / 10;
-    return {ovelse, siste: siste.v, dato: siste.date, fra: gml.v, fra_dato: gml.date, endring,
-            tolkbar: Math.abs(endring) >= 5, n: v.length};
-  }).sort((a, b) => b.n - a.n);
-  return {uke_hard: per(naa, hard).length, uke_lette: per(naa, x => !hard(x)).length,
-          forrige_hard: per(naa - 1, hard).length, grupper, forrige, snittRir, topp,
-          okter: new Set(sett.filter(x => x.u === naa).map(x => x.date)).size};
-}
-function vStyrke(){
-  const logg = S.styrke || [], idag = osloDate(), t = styrkeTall(logg, idag);
-  const iDag = logg.find(x => x.date === idag);
-  const navn = [...new Set(logg.flatMap(x => (x.sett || []).map(s2 => s2.ovelse)).filter(Boolean))];
-  const grupper = Object.keys({...t.grupper, ...t.forrige}).sort();
-  return `<div class="stack">
-  <form id="settform" class="panel stack"><h2>Logg et sett</h2>
-    <label class="lbl" for="st-ov">Øvelse<input id="st-ov" class="txt" list="st-navn" placeholder="F.eks. Knebøy" maxlength="60" value="${esc(S.stSist || "")}"><datalist id="st-navn">${navn.map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist></label>
-    <div class="row">
-      <label class="lbl" for="st-kg" style="flex:1;min-width:90px">Kg<input id="st-kg" class="txt" type="number" step="0.5" min="0" inputmode="decimal"></label>
-      <label class="lbl" for="st-reps" style="flex:1;min-width:90px">Reps<input id="st-reps" class="txt" type="number" min="1" max="60" inputmode="numeric"></label>
-      <label class="lbl" for="st-rir" style="flex:1;min-width:90px">RIR<input id="st-rir" class="txt" type="number" min="0" max="10" inputmode="numeric"></label>
-    </div>
-    <div><button class="btn primary">Legg til sett</button></div>
-    <p class="muted" style="font-size:13px">RIR er repetisjoner igjen i tanken. 0 til 5 teller som hardt sett.</p></form>
-  <div class="tiles">
-    <div class="tile static"><span class="big tnum">${t.uke_hard}</span><span class="lab">harde sett denne uka</span></div>
-    <div class="tile static"><span class="big tnum ${tone(t.uke_hard - t.forrige_hard)}">${sgn(t.uke_hard - t.forrige_hard)}</span><span class="lab">mot forrige uke</span></div>
-    <div class="tile static"><span class="big tnum">${t.okter}</span><span class="lab">økter denne uka</span></div>
-    <div class="tile static"><span class="big tnum">${t.uke_lette}</span><span class="lab">sett med RIR over 5</span></div>
-  </div>
-  ${iDag ? `<div class="panel stack"><div class="spread"><h2>I dag</h2><span class="muted tnum" style="font-size:13px">${(iDag.sett || []).length} sett</span></div>
-    <div class="notes">${(iDag.sett || []).map((x, i) => `<div class="lrow"><div class="lco"><b>${esc(x.ovelse)}</b><span class="muted">${esc(muskel(x.ovelse))}${x.tid ? " · " + esc(String(x.tid).slice(11, 16)) : ""}</span></div>
-      <div class="lt"><span class="tnum">${x.kg ?? "–"} kg × ${x.reps ?? "–"}${x.rir !== null && x.rir !== undefined ? " @ RIR " + x.rir : ""}</span>
-        <button class="x" data-settdel="${i}" aria-label="Fjern settet">×</button></div></div>`).join("")}</div></div>` : ""}
-  ${grupper.length ? `<div class="panel stack"><h2>Harde sett per muskelgruppe</h2><div class="notes">${grupper.map(g => {
-      const n = t.grupper[g] || 0, f = t.forrige[g] || 0;
-      return `<div class="lrow"><div class="lco"><b>${esc(g)}</b><span class="muted">forrige uke ${f}</span>
-        <div class="progress" style="margin-top:6px"><i style="width:${Math.min(100, n * 100 / 20).toFixed(0)}%"></i></div></div>
-        <div class="lt"><span class="tnum">${n}</span></div></div>`; }).join("")}</div>
-    <p class="muted" style="font-size:13px">Søylen er mot 20 sett i uka som referanse, ikke et mål. Øvelser appen ikke kjenner havner under Annet.</p></div>` : ""}
-  ${t.topp.length ? `<div class="panel stack"><h2>Estimert 1RM</h2><div class="notes">${t.topp.slice(0, 8).map(x => `<div class="lrow">
-      <div class="lco"><b>${esc(x.ovelse)}</b><span class="muted">${esc(x.dato)} · ${x.n} målinger</span></div>
-      <div class="lt"><span class="tnum">${x.siste} ± ${E1RM_SEP} kg</span>
-        <div class="muted tnum" style="font-size:13px">${x.tolkbar ? sgn(x.endring) + " kg siden " + esc(x.fra_dato) : "endring under 5 kg, ikke tolkbar"}</div></div></div>`).join("")}</div>
-    <p class="muted" style="font-size:13px">Regnet med Epley fra sett på ${E1RM_MAKS_REPS} repetisjoner eller mindre. Prediksjonsfeilen er rundt ${E1RM_SEP} kg, så små endringer er støy.</p></div>` : ""}
-  ${t.snittRir.length ? `<div class="panel stack"><h2>Snitt RIR siste fire uker</h2><div class="notes">${t.snittRir.slice(0, 10).map(x => `<div class="lrow"><div class="lco"><b>${esc(x.ovelse)}</b><span class="muted">${x.n} sett</span></div><div class="lt"><span class="tnum">${x.rir}</span></div></div>`).join("")}</div>
-    <p class="muted" style="font-size:13px">Robinson et al. 2024: 0 til 5 RIR for vekst, 3 til 5 med tyngre last for styrke.</p></div>` : ""}
-  ${!logg.length ? `<div class="empty"><b>Ingen sett logget ennå.</b><br>Logg ett sett av gangen. Panelet trenger ikke mer enn øvelse, kg, reps og RIR.</div>` : ""}</div>`;
-}
-/* ---------- Short, nordiske meldinger og marked ---------- */
-function shortRad(d){
-  // Null i registeret betyr under terskelen paa 0,5 prosent, ikke ingen short.
-  // Fritatte utstedere maa ikke se ut som om de har null short.
-  const niva = d.fritatt ? "fritatt" : d.under_terskel ? "under 0,5 %" : (d.pct).toFixed(2) + " %";
-  const e = d.endring === null || d.endring === undefined ? "" : (d.endring > 0 ? "+" : "") + d.endring.toFixed(2) + " pp";
-  return `<div class="lrow"><div class="lco"><b>${esc(d.utsteder || d.isin)}</b><span class="muted">${esc(d.isin)}${d.holdere ? " · " + d.holdere + (d.holdere === 1 ? " holder" : " holdere") : ""}</span></div>
-    <div class="lt"><span class="tnum">${esc(niva)}</span>${e ? `<div class="muted tnum ${d.endring > 0 ? "neg" : "pos"}" style="font-size:13px">${esc(e)}</div>` : ""}</div></div>`;
-}
 function vShort(){
   const d = (S.short || [])[0];
   if (!d) return `<div class="empty"><b>Ingen shortdata ennå.</b><br>Hentes fra Finanstilsynets register hver virkedag etter 15:30.</div>`;
@@ -1587,12 +1912,13 @@ function vMa36(){
 function vKitchen(){
   if (!S.db) return `<div class="empty"><b>Lagring er ikke tilgjengelig i denne visningen.</b><br>Åpne siden innlogget i Claude for å se og lagre oppskrifter.</div>`;
   if (S.recipeMode === "new") return kitchenNew();
+  if (S.recipeMode === "shop") return vHandle();
   const r = S.recipes.find(x => x.id === S.recipeId);
   if (S.recipeMode === "edit" && r) return kitchenEdit(r);
   if (r) return kitchenDetail(r);
   const q = (S.rq || "").toLowerCase();
   const list = S.recipes.filter(x => !q || (x.title + " " + (x.tags||[]).join(" ")).toLowerCase().includes(q));
-  return `<div class="spread"><h2>Oppskrifter</h2><button class="btn primary" id="newrec">Ny oppskrift</button></div>
+  return `<div class="spread"><h2>Oppskrifter</h2><span class="row" style="gap:8px"><button class="btn" id="shoprec">Handleliste</button><button class="btn primary" id="newrec">Ny oppskrift</button></span></div>
     ${S.recipes.length > 4 ? `<input id="rq" class="txt" placeholder="Søk i oppskrifter" value="${esc(S.rq || "")}">` : ""}
     ${S.recipes.length ? `<div class="rlist">${list.map(x => {
       const last = (x.cooked || []).slice(-1)[0]; const nn = (x.notes || []).length;
@@ -3070,7 +3396,7 @@ document.addEventListener("click", async e => {
   const gk = t.closest("[data-genkeep]"); if (gk) { S.gen.preview[Number(gk.dataset.genkeep)].keep = gk.checked; gk.closest(".genrow").classList.toggle("off", !gk.checked); const b = $("#gen-save"); if (b) b.textContent = `Lagre ${S.gen.preview.filter(p => p.keep).length} kort`; return; }
   const os = t.closest("[data-ownsrc]"); if (os) { S.ownOpen = S.ownOpen === os.dataset.ownsrc ? null : os.dataset.ownsrc; render(); return; }
   const dc = t.closest("[data-delcard]"); if (dc) { try { await S.db.doc("kort/" + dc.dataset.delcard).delete(); toast("Kort slettet"); } catch (err) { toast(writeErr(err)); } return; }
-  const g = t.closest("[data-go]"); if (g) { if (g.dataset.sub) S.learnSub = g.dataset.sub; go(g.dataset.go); return; }
+  const g = t.closest("[data-go]"); if (g) { if (g.dataset.sub) S.learnSub = g.dataset.sub; if (g.dataset.hsub) { S.hSub = g.dataset.hsub; store.set("mp.hsub", S.hSub); } go(g.dataset.go); return; }
   const sub = t.closest("[data-sub]"); if (sub && S.view === "laering") { S.learnSub = sub.dataset.sub; S.showSettings = null; if (sub.dataset.sub === "geo") loadMaps(); render(); return; }
   // helse
   if (t.id === "edthemes") { S.editThemes = !S.editThemes; render(); return; }
@@ -3118,15 +3444,21 @@ document.addEventListener("click", async e => {
   if (t.id === "f-nytt") { S.fNy = true; render(); return true; }
   if (t.id === "f-avbryt") { S.fNy = false; render(); return true; }
   const ms = t.closest("[data-msub]"); if (ms) { S.mSub = ms.dataset.msub; store.set("mp.msub", S.mSub); render(); return true; }
+  const vk = t.closest("[data-vksub]"); if (vk) { S.vkSub = vk.dataset.vksub; store.set("mp.vksub", S.vkSub); render(); return true; }
+  const rs = t.closest("[data-rapsub]"); if (rs) { S.rapSub = rs.dataset.rapsub; store.set("mp.rapsub", S.rapSub); render(); return true; }
+  const mn = t.closest("[data-mnd]"); if (mn) { S.mnd = mn.dataset.mnd; render(); return true; }
+  const rf = t.closest("[data-rmf]"); if (rf) { S.rmFilter = rf.dataset.rmf; render(); return true; }
+  const rsr = t.closest("[data-rms]"); if (rsr) { S.rmSort = rsr.dataset.rms; render(); return true; }
+  const rmo = t.closest("[data-rmo]"); if (rmo) { S.rmOpen = S.rmOpen === rmo.dataset.rmo ? null : rmo.dataset.rmo; render(); return true; }
+  if (t.id === "rm-alle") { S.rmAlle = !S.rmAlle; render(); return true; }
+  const sct = t.closest("[data-sct]"); if (sct) { S.scTab = sct.dataset.sct; S.scSort = null; S.scOpen = null; store.set("mp.sctab", S.scTab); render(); return true; }
+  const scs = t.closest("[data-scs]"); if (scs) { S.scSort = scs.dataset.scs; render(); return true; }
+  const sco = t.closest("[data-sco]"); if (sco) { S.scOpen = S.scOpen === sco.dataset.sco ? null : sco.dataset.sco; render(); return true; }
+  if (t.id === "shoprec") { S.recipeMode = "shop"; render(); window.scrollTo({top: 0}); return true; }
+  if (t.id === "shopcopy") { const txt = handleliste(S.recipes.filter(r => (S.shopSel || []).includes(r.id)).map(r => { const g = parseFloat(String(r.servings || "").replace(",", ".")), o = Number((S.shopPort || {})[r.id]) || g; return {ingredienser: r.ingredients || [], faktor: g > 0 && o ? o / g : 1}; })).map(x => "- " + x.vis).join("\n"); try { await navigator.clipboard.writeText(txt); toast("Handlelisten er kopiert"); } catch { toast("Kunne ikke kopiere"); } return true; }
   const uv = t.closest("[data-uke]"); if (uv) { S.ukeValgt = uv.dataset.uke; S.ukeSvar = null; render(); return true; }
   if (t.id === "ukearkiv") { await arkiverUke(); return true; }
   const hs = t.closest("[data-hsub]"); if (hs) { S.hSub = hs.dataset.hsub; store.set("mp.hsub", S.hSub); render(); return true; }
-  const sd = t.closest("[data-settdel]");
-  if (sd) { const i = Number(sd.dataset.settdel), dag = osloDate(), d = (S.styrke || []).find(x => x.date === dag);
-    if (!d || !S.db) return true;
-    const sett = (d.sett || []).filter((_, k) => k !== i);
-    try { await S.db.doc("styrke/" + dag).set({...d, sett, updated_at: new Date().toISOString()}); toast("Settet er fjernet"); }
-    catch (err) { toast(writeErr(err)); } return true; }
   const fs = t.closest("[data-fsub]"); if (fs) { S.finSub = fs.dataset.fsub; store.set("mp.fsub", S.finSub); render(); return; }
   const msb = t.closest("[data-masort]"); if (msb) { const k = msb.dataset.masort; S.maSort = S.maSort.k === k ? {k, dir: -S.maSort.dir} : {k, dir: -1}; store.set("mp.masort", JSON.stringify(S.maSort)); render(); return; }
   const mo = t.closest("[data-maopen]"); if (mo) { S.maOpen = S.maOpen === mo.dataset.maopen ? null : mo.dataset.maopen; render(); return; }
@@ -3159,7 +3491,6 @@ document.addEventListener("input", e => {
   if (e.target.id === "gsearch") { SQ.q = e.target.value; clearTimeout(SQ.t); SQ.t = setTimeout(() => { const r = $("#sres"); if (r) r.innerHTML = searchResults(); }, 180); }
   if (e.target.dataset?.imptitle !== undefined && IMP.plan) IMP.plan[e.target.dataset.imptitle].title = e.target.value;
   if (e.target.dataset?.impsub !== undefined && IMP.plan) IMP.plan[e.target.dataset.impsub].sub = e.target.value.trim();
-  if (e.target.id === "ukesel") { S.ukeValgt = e.target.value; S.ukeSvar = null; render(); return; }
   if (e.target.dataset?.uq !== undefined) { const d = ukeValgt(); if (d) { const n = S.ukeSvar && S.ukeSvar.uke === d.uke ? S.ukeSvar : {uke: d.uke, svar: {...(d.svar || {})}}; n.svar[e.target.dataset.uq] = e.target.value; S.ukeSvar = n; const b = $("#ukearkiv"); if (b) b.disabled = !Object.values(n.svar).some(v => String(v || "").trim().length > 2); } }
   if (e.target.dataset?.genq !== undefined) S.gen.preview[Number(e.target.dataset.genq)].q = e.target.value;
   if (e.target.dataset?.gena !== undefined) S.gen.preview[Number(e.target.dataset.gena)].a = e.target.value;
@@ -3178,6 +3509,10 @@ document.addEventListener("dragleave", e => { const d = e.target.closest?.("#cap
 document.addEventListener("drop", e => { const d = e.target.closest?.("#capdrop"); if (!d) return; e.preventDefault(); d.classList.remove("over"); const fs = [...(e.dataTransfer?.files || [])]; if (fs.length) capAddFiles(fs); });
 document.addEventListener("change", e => {
   const t = e.target;
+  if (t.id === "ukesel") { S.ukeValgt = t.value; S.ukeSvar = null; render(); return; }
+  if (t.dataset?.shopsel !== undefined) { const s = new Set(S.shopSel || []); t.checked ? s.add(t.dataset.shopsel) : s.delete(t.dataset.shopsel); S.shopSel = [...s]; store.set("mp.shopsel", JSON.stringify(S.shopSel)); render(); return; }
+  if (t.dataset?.shopport !== undefined) { S.shopPort = {...(S.shopPort || {}), [t.dataset.shopport]: Math.max(1, Math.min(50, Number(t.value) || 1))}; store.set("mp.shopport", JSON.stringify(S.shopPort)); render(); return; }
+  if (t.dataset?.shopdone !== undefined) { const s = new Set(S.shopDone || []); t.checked ? s.add(t.dataset.shopdone) : s.delete(t.dataset.shopdone); S.shopDone = [...s]; store.set("mp.shopdone", JSON.stringify(S.shopDone)); render(); return; }
   if (t.id === "impfiles" && t.files?.length) { readImportFiles([...t.files]); return; }
   if (t.classList?.contains("capin") && t.files?.length) { capAddFiles([...t.files]); t.value = ""; return; }
   if (t.dataset?.capmove !== undefined) { (async () => { const ok = await moveNote(t.dataset.capmove, t.value || null); if (ok) toast("Flyttet"); const side = $(".nside"); if (side) side.innerHTML = notesSide(); const o = $("#capout"); if (o) { t.blur(); o.innerHTML = capOut(); } })(); return; }
@@ -3209,17 +3544,6 @@ document.addEventListener("submit", async e => {
       if (!Object.values(set.types).some(Boolean)) { toast("Velg minst én korttype"); return; } }
     LD(deck).settings = set; S.showSettings = null; if (S.session?.deck === deck) S.session = null; markDirty(DECKS[deck].path, true); render(); toast("Innstillinger lagret"); return; }
   if (f.id === "manualcard") { const q = $("#mc-q").value.trim(), a = $("#mc-a").value.trim(); if (!q || !a) { toast("Fyll inn både spørsmål og svar"); return; } if (await saveCards([{q, a}], "Egne notater")) { $("#mc-q").value = ""; $("#mc-a").value = ""; } return; }
-  if (f.id === "settform") {
-    const ovelse = $("#st-ov").value.trim(), kg = Number($("#st-kg").value), reps = Number($("#st-reps").value);
-    const rirRaa = $("#st-rir").value.trim(), rir = rirRaa === "" ? null : Number(rirRaa);
-    if (!ovelse || !reps || !S.db) { toast("Fyll inn minst øvelse og reps"); return; }
-    const dag = osloDate(), d = (S.styrke || []).find(x => x.date === dag) || {date: dag, sett: []};
-    const sett = [...(d.sett || []), {ovelse, kg: kg || null, reps, rir, tid: new Date().toISOString()}];
-    S.stSist = ovelse;
-    try { await S.db.doc("styrke/" + dag).set({...d, date: dag, sett, updated_at: new Date().toISOString()});
-      $("#st-kg").value = ""; $("#st-reps").value = ""; toast("Sett lagret"); }
-    catch (err) { toast(writeErr(err)); }
-    return; }
   if (f.id === "gitemform") { const name = $("#gi-name").value.trim(); if (!name || !S.db) return; const target = Number($("#gi-target").value) || null;
     try { await S.db.doc("gitar-ovelser/i" + Date.now().toString(36)).set({name, target, created: osloDate()}); toast("Øvelse lagt til"); } catch (err) { toast(writeErr(err)); } return; }
   if (f.id === "glogform") { const item = $("#g-item").value; if (!item || !S.db) return;
@@ -3324,7 +3648,7 @@ function loadLearnDoc(path, key, def){
     .catch(() => { if (key === "G") S.G = def(); else S.L[key] = def(); S.Lloaded[key] = true; render(); });
 }
 async function boot(){
-  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "roadmap"; { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
+  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
   go(VIEWS.includes(h) ? h : (store.get("mp.view") || "idag"));
   loadGeo(); loadHist();
   const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
@@ -3337,27 +3661,30 @@ async function boot(){
     const keep = S.feeds.findIndex(x => x.date === curDate); S.feedIdx = S.feedManual && keep >= 0 ? keep : 0; subscribeTp(); render();
   }, () => {});
   db.doc("config/main").onSnapshot(s => { S.config = s.exists ? thaw(s) : null; if (S.view === "helse") render(); else renderHeader(); }, () => {});
-  db.collection("recipes").onSnapshot(snap => { S.recipes = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(b.updated_at||"").localeCompare(String(a.updated_at||""))); if (S.view === "kokk" && S.recipeMode !== "edit" && S.recipeMode !== "new") render(); else renderHeader(); }, () => {});
-  db.collection("gitar-ovelser").onSnapshot(snap => { S.gItems = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(a.name).localeCompare(String(b.name), "nb")); if (S.view === "gitar" && S.gSub === "log") render(); }, () => {});
-  db.collection("gitar-logg").onSnapshot(snap => { S.gLog = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(b.created_at||b.date).localeCompare(String(a.created_at||a.date))); if (S.view === "gitar" && S.gSub === "log") render(); }, () => {});
+  db.collection("recipes").onSnapshot(snap => { S.recipes = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(b.updated_at||"").localeCompare(String(a.updated_at||""))); if (inV("kokk") && S.recipeMode !== "edit" && S.recipeMode !== "new") render(); else renderHeader(); }, () => {});
+  db.collection("gitar-ovelser").onSnapshot(snap => { S.gItems = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(a.name).localeCompare(String(b.name), "nb")); if (inV("gitar") && S.gSub === "log") render(); }, () => {});
+  db.collection("gitar-logg").onSnapshot(snap => { S.gLog = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a,b) => String(b.created_at||b.date).localeCompare(String(a.created_at||a.date))); if (inV("gitar") && S.gSub === "log") render(); }, () => {});
   db.collection("ma36").orderBy("date", "desc").limit(1).onSnapshot(snap => { const d = snap.docs[0]; S.ma36 = d ? thaw(d) : null; if (S.view === "finans" && S.finSub === "ma36") render(); }, () => {});
   db.doc("repetisjonslogg/" + rloggMaaned()).onSnapshot(s2 => { if (s2.exists) S.rlog = thaw(s2); }, () => {});
-  db.collection("styrke").orderBy("date", "desc").limit(200).onSnapshot(snap => { S.styrke = snap.docs.map(d => thaw(d)); if (S.view === "helse" && S.hSub === "styrke") render(); }, () => {});
-  db.collection("annotasjon").orderBy("dato", "desc").limit(120).onSnapshot(snap => { S.annot = snap.docs.map(d => thaw(d)); if (S.view === "uke" && S.ukeSub === "endringer") render(); }, () => {});
-  db.collection("eksperiment").orderBy("start", "desc").limit(20).onSnapshot(snap => { S.forsok = snap.docs.map(d => thaw(d)); if (S.view === "uke" && S.ukeSub === "forsok") render(); }, () => {});
+  db.collection("annotasjon").orderBy("dato", "desc").limit(120).onSnapshot(snap => { S.annot = snap.docs.map(d => thaw(d)); if (inV("uke") && S.ukeSub === "endringer") render(); }, () => {});
+  db.collection("eksperiment").orderBy("start", "desc").limit(20).onSnapshot(snap => { S.forsok = snap.docs.map(d => thaw(d)); if (inV("uke") && S.ukeSub === "forsok") render(); }, () => {});
   db.doc("varsel/vapid").onSnapshot(s2 => { S.vapidPub = s2.exists ? (thaw(s2).public || null) : null; if (S.view === "idag") render(); }, () => {});
   db.doc("varsel/innstillinger").onSnapshot(s2 => { S.varselInns = s2.exists ? thaw(s2) : null; if (S.view === "idag") render(); }, () => {});
   db.doc("varsel/abonnement").onSnapshot(s2 => { S.varselSubs = s2.exists ? (thaw(s2).subs || []) : []; if (S.view === "idag") render(); }, () => {});
-  db.collection("marked").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.marked = snap.docs[0] ? thaw(snap.docs[0]) : null; const n = $("#n-marked"); if (n) n.textContent = S.marked?.bredder?.fase2 || ""; if (S.view === "marked" || S.view === "idag") render(); }, () => {});
-  db.collection("debrief").orderBy("uke", "desc").limit(26).onSnapshot(snap => { S.debriefer = snap.docs.map(d => thaw(d)); const n = $("#n-uke"); const venter = S.debriefer.filter(x => x.status !== "ferdig" && (x.hendelser || []).length >= (x.krav_hendelser || 3)).length; if (n) n.textContent = venter || ""; if (S.view === "uke") render(); }, () => {});
-  db.doc("helse/sri").onSnapshot(s2 => { S.sri = s2.exists ? thaw(s2) : null; if (S.view === "helse" && S.hSub === "sovn") render(); }, () => {});
-  db.collection("helse").orderBy("dag", "desc").limit(40).onSnapshot(snap => { S.sovn = snap.docs.map(d => thaw(d)).filter(d => d.vinduer); if (S.view === "helse" && S.hSub === "sovn") render(); }, () => {});
-  db.doc("trading/risiko").onSnapshot(s => { S.risiko = s.exists ? thaw(s) : null; if (S.view === "trading") render(); }, () => {});
+  db.collection("markedma").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.ma = snap.docs[0] ? thaw(snap.docs[0]) : null; const n = $("#n-marked"); if (n) n.textContent = (S.ma?.toppliste || []).filter(x => x.stage === 2).length || ""; if (S.view === "marked" || S.view === "idag") render(); }, () => {});
+  db.collection("screener").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.scr = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "marked" && S.mSub === "screener") render(); }, () => {});
+  db.collection("maaned").orderBy("maaned", "desc").limit(12).onSnapshot(snap => { S.maaneder = snap.docs.map(d => thaw(d)); if (inV("maaned") || (S.view === "rapport" && S.rapSub === "maaned")) render(); }, () => {});
+  db.collection("kalender").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kal = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "idag") render(); }, () => {});
+  db.doc("effekt/oversikt").onSnapshot(s2 => { S.effekt = s2.exists ? thaw(s2) : null; if (inV("uke") && S.ukeSub === "endringer") render(); }, () => {});
+  db.collection("debrief").orderBy("uke", "desc").limit(26).onSnapshot(snap => { S.debriefer = snap.docs.map(d => thaw(d)); const n = $("#n-rapport"); const venter = S.debriefer.filter(x => x.status !== "ferdig" && (x.hendelser || []).length >= (x.krav_hendelser || 3)).length; if (n) n.textContent = venter || ""; if (inV("uke")) render(); }, () => {});
+  db.doc("helse/sri").onSnapshot(s2 => { S.sri = s2.exists ? thaw(s2) : null; if (S.view === "helse" || S.view === "idag") render(); }, () => {});
+  db.collection("helse").orderBy("dag", "desc").limit(90).onSnapshot(snap => { const alle = snap.docs.map(d => thaw(d)); S.sovn = alle.filter(d => d.vinduer); S.form = alle.filter(d => d.hrv || d.body_battery); if (S.view === "helse" || S.view === "idag") render(); }, () => {});
+  db.doc("trading/risiko").onSnapshot(s => { S.risiko = s.exists ? thaw(s) : null; if (inV("trading")) render(); }, () => {});
   db.collection("short").orderBy("date", "desc").limit(2).onSnapshot(snap => { S.short = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "short") render(); }, () => {});
   db.collection("nasdaq").orderBy("date", "desc").limit(5).onSnapshot(snap => { S.nasdaq = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "news") render(); }, () => {});
   db.collection("kontekst").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kontekst = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "marked" && S.mSub === "makro") render(); }, () => {});
   db.collection("uran").orderBy("maaned", "desc").limit(24).onSnapshot(snap => { S.uran = snap.docs.map(d => thaw(d)); if (S.view === "marked" && S.mSub === "makro") render(); }, () => {});
-  db.doc("trading/status").onSnapshot(s => { S.trading = s.exists ? thaw(s) : null; const n = $("#n-trading"); if (n) n.textContent = S.trading?.positions?.length || ""; if (S.view === "trading" || S.view === "idag") render(); }, () => {});
+  db.doc("trading/status").onSnapshot(s => { S.trading = s.exists ? thaw(s) : null; if (inV("trading") || S.view === "idag") render(); }, () => {});
   db.collection("kort-vg3").onSnapshot(snap => { S.vg3Cards = snap.docs.map(d => ({id: d.id, ...thaw(d)})); if (S.view === "laering" && S.learnSub === "vg3" && !S.session) render(); else renderHeader(); }, () => {});
   db.collection("kort").onSnapshot(snap => { S.ownCards = snap.docs.map(d => ({id: d.id, ...thaw(d)})); if (S.view === "laering" && !document.activeElement?.closest?.("#genpanel")) render(); else renderHeader(); }, () => {});
   db.collection("notater").onSnapshot(snap => {
