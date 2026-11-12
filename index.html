@@ -1157,6 +1157,34 @@ function serieGraf(d){
   return `<div class="panel stack"><div class="spread"><h2>Siste dager</h2><span class="muted" style="font-size:12px">${s[0]?.d || ""} til ${s[s.length - 1]?.d || ""}</span></div>${deler.join("")}
     <p class="muted" style="font-size:12px;margin:0">Makro-score går lenger tilbake enn resten. Bredde, fase og gull-treff bygges opp fra og med at motoren begynte å lagre dem, og vises når det er tre dager.</p></div>`;
 }
+function serieGrupper(d, felt, tittel, enhet){
+  const s = d.serie || [], navn = new Set();
+  s.forEach(x => Object.keys(x[felt] || {}).forEach(k => navn.add(k)));
+  const rader = [...navn].map(k => { const v = s.map(x => (x[felt] || {})[k] ?? null), n = v.filter(a => a != null).length, sist = [...v].reverse().find(a => a != null), forst = v.find(a => a != null); return {k, v, n, sist, d: n >= 2 ? sist - forst : null}; }).filter(r => r.n >= 3).sort((a, b) => b.sist - a.sist);
+  const dager = Math.max(0, ...[...navn].map(k => s.filter(x => (x[felt] || {})[k] != null).length));
+  if (!rader.length) return `<div class="panel stack"><h2>${tittel}</h2><p class="muted" style="margin:0">Lagres daglig av motoren fra og med i dag og tegnes når det er tre dager (hittil ${dager}).</p></div>`;
+  return `<div class="panel stack"><div class="spread"><h2>${tittel}</h2><span class="muted" style="font-size:12px">${dager} dager</span></div>
+    <div class="notes">${rader.map(r => `<div class="lrow"><div class="lco"><b>${esc(r.k)}</b></div><div class="lt"><div class="row" style="gap:10px;align-items:center;justify-content:space-between"><span class="tnum" style="min-width:70px"><b>${esc(String(r.sist))}${enhet}</b> ${r.d != null && r.d !== 0 ? `<span class="${tone(r.d)}" style="font-size:12px">${dTall(r.d, "", 1)}</span>` : ""}</span><span style="width:110px;flex:none">${miniChart(r.v, {w: 110, h: 24, label: r.k + " over tid"})}</span></div></div></div>`).join("")}</div></div>`;
+}
+/* Bredde og ledere regnet av de ukentlige aksjedataene (S.aks), uavhengig av ETF-ene over. */
+function aksjeBredde(){
+  const d = S.aks; if (!d || !(d.aksjer || []).length) return "";
+  const a = d.aksjer.filter(x => x.t_kjent >= 6 && x.px != null), n = a.length; if (n < 30) return "";
+  const opp = x => x.px > x.sma200 && x.sma50 > x.sma200, pr = k => Math.round(100 * k / n);
+  const o200 = a.filter(x => x.sma200 != null && x.px > x.sma200).length, t7 = a.filter(x => x.t_ok >= 7).length, nær = a.filter(x => x.hi52 && x.px >= 0.95 * x.hi52).length, sepa = a.filter(x => x.t_ok === 8 && x.f_ok >= 6).length;
+  const sek = {}; a.forEach(x => { const k = x.sector || "Ukjent"; (sek[k] = sek[k] || []).push(x); });
+  const sektorer = Object.entries(sek).filter(([, l]) => l.length >= 8).map(([k, l]) => ({k, n: l.length, p: Math.round(100 * l.filter(opp).length / l.length), rs: Math.round(l.reduce((t, x) => t + (x.rs || 0), 0) / l.length)})).sort((x, y) => y.p - x.p || y.rs - x.rs);
+  const ledere = a.filter(x => x.t_ok >= 7 && x.rs != null).sort((x, y) => y.rs - x.rs).slice(0, 8);
+  const brudd = a.filter(x => !ledere.includes(x) && x.t_ok === 8 && x.hi52 && x.px >= 0.97 * x.hi52).sort((x, y) => (y.rs || 0) - (x.rs || 0)).slice(0, 8);
+  const rad = x => `<div class="lrow"><div class="lco"><b>${esc(x.display_name || x.name || x.ticker)}</b><span class="muted">${esc(x.ticker)} · ${esc(AK_LAND[x.region] || x.region || "")}</span></div><div class="lt tnum"><span class="muted" style="font-size:12px">RS ${x.rs ?? "–"}</span> · 3 mnd ${pctF(x.r3m, 0)} · T ${x.t_ok}/${x.t_kjent} F ${x.f_ok}/${x.f_kjent}</div></div>`;
+  const sk = l => l.map(s => `<div class="spread"><span>${esc(s.k)} <span class="muted" style="font-size:12px">${s.n}</span></span><span class="tnum"><b>${s.p} %</b></span></div>`).join("");
+  return `<div class="panel stack"><div class="spread"><h2>Aksjemarkedet i tall</h2><span class="muted tnum" style="font-size:13px">${esc(d.date)} · ${n} aksjer</span></div>
+    <div class="tiles"><div class="tile static"><span class="big tnum">${pr(o200)} %</span><span class="lab">over 200-dagers</span></div><div class="tile static"><span class="big tnum">${pr(t7)} %</span><span class="lab">oppfyller 7 av 8 i trend template</span></div><div class="tile static"><span class="big tnum">${pr(nær)} %</span><span class="lab">innen 5 % av 52-ukers topp</span></div><div class="tile static"><span class="big tnum">${sepa}</span><span class="lab">full trend template og 6+ fundamentale</span></div></div>
+    ${sektorer.length >= 4 ? `<div class="eyebrow">Andel i opptrend per sektor</div><div class="cols"><div class="stack">${sk(sektorer.slice(0, 5))}</div><div class="stack">${sk(sektorer.slice(-5).reverse())}</div></div>` : ""}
+    ${ledere.length ? `<div class="eyebrow">Ledere: sterkest relativ styrke med minst 7 av 8</div><div class="notes">${ledere.map(rad).join("")}</div>` : ""}
+    ${brudd.length ? `<div class="eyebrow">Full trend template og innen 3 % av toppen</div><div class="notes">${brudd.map(rad).join("")}</div>` : ""}
+    <p class="muted" style="font-size:12px;margin:0">Regnet av ${n} aksjer med full kurshistorikk, oppdatert ukentlig. Opptrend betyr kurs over 200-dagers og 50-dagers over 200-dagers. Beskrivelse, ikke råd om å kjøpe eller selge.</p></div>`;
+}
 function vMStatus(d){
   const tl = d.toppliste || [], t = d.trend || {};
   const nGull = tl.filter(x => x.slaar_gull).length, nF2 = tl.filter(x => x.stage === 2).length;
@@ -1196,6 +1224,9 @@ function vMStatus(d){
     <p class="muted" style="font-size:12px;margin:0">${mangler.length ? "Ikke nok historikk ennå for " + mangler.join(" og ") + ". " : ""}Sammenlignet med nærmeste tilgjengelige dato: ${refTekst || "ingen"}.${t.uke?.regime_fra ? ` Regimet for en uke siden: ${esc(t.uke.regime_fra)}.` : ""}</p>
   </div>
   ${serieGraf(d)}
+  ${aksjeBredde()}
+  ${serieGrupper(d, "s", "Sjangerstyrke over tid", "")}
+  ${serieGrupper(d, "x", "Sektorflyt over tid, 3 måneder", " %")}
   <div class="panel stack">
     <h2>Sjangere</h2>
     <div class="notes">${sj.map(g => `<div class="lrow"><div class="lco"><b>${esc(g.sjanger)}</b><span class="muted">${g.n} instrumenter</span></div>
