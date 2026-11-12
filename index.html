@@ -1148,6 +1148,15 @@ function vMarked(){
   const gammel = d.gammel_dager > 2 ? `<p class="warn" style="margin:0">MarketAnalyzor-dataene er ${d.gammel_dager} dager gamle. Kjøringen deres har trolig stoppet.</p>` : "";
   return `<div class="stack">${tabs}${gammel}${sub === "roadmap" ? vRoadmap(d) : vMStatus(d)}</div>`;
 }
+function serieGraf(d){
+  const s = d.serie || [];
+  const rad = (navn, k, enhet, o = {}) => { const v = s.map(x => x[k] ?? null); if (v.filter(x => x != null).length < 3) return ""; const sist = [...v].reverse().find(x => x != null);
+    return `<div class="stack" style="gap:2px"><div class="spread"><b style="font-size:14px">${navn}</b><span class="tnum muted" style="font-size:13px">${esc(String(sist))}${enhet}</span></div>${miniChart(v, {h: 48, label: navn + " siste " + s.length + " dager", ...o})}</div>`; };
+  const deler = [rad("Makro-score", "m", "", {min: 0, max: 100}), rad("Over 50-dagers", "b50", " %", {min: 0, max: 100}), rad("Over 200-dagers", "b200", " %", {min: 0, max: 100}), rad("I fase 2", "f2", ""), rad("Slår gull", "sg", "")].filter(Boolean);
+  if (!deler.length) return "";
+  return `<div class="panel stack"><div class="spread"><h2>Siste dager</h2><span class="muted" style="font-size:12px">${s[0]?.d || ""} til ${s[s.length - 1]?.d || ""}</span></div>${deler.join("")}
+    <p class="muted" style="font-size:12px;margin:0">Makro-score går lenger tilbake enn resten. Bredde, fase og gull-treff bygges opp fra og med at motoren begynte å lagre dem, og vises når det er tre dager.</p></div>`;
+}
 function vMStatus(d){
   const tl = d.toppliste || [], t = d.trend || {};
   const nGull = tl.filter(x => x.slaar_gull).length, nF2 = tl.filter(x => x.stage === 2).length;
@@ -1186,6 +1195,7 @@ function vMStatus(d){
     ${tab}
     <p class="muted" style="font-size:12px;margin:0">${mangler.length ? "Ikke nok historikk ennå for " + mangler.join(" og ") + ". " : ""}Sammenlignet med nærmeste tilgjengelige dato: ${refTekst || "ingen"}.${t.uke?.regime_fra ? ` Regimet for en uke siden: ${esc(t.uke.regime_fra)}.` : ""}</p>
   </div>
+  ${serieGraf(d)}
   <div class="panel stack">
     <h2>Sjangere</h2>
     <div class="notes">${sj.map(g => `<div class="lrow"><div class="lco"><b>${esc(g.sjanger)}</b><span class="muted">${g.n} instrumenter</span></div>
@@ -1284,7 +1294,83 @@ function scVal(x, k){
   const m = {omsetning_yoy: x.rev_yoy, omsetning_qoq: x.rev_qoq, eps_yoy: x.eps_yoy, margin: x.margin, peg: x.peg, oppside: x.oppside}[k];
   return m;
 }
-function vScreener(){
+/* Aksjer, fullt univers. Rådata hentes ukentlig (aksjer.yml) og alt som har ett riktig svar,
+   Minervini, relativ styrke og verdimål, regnes i kode (tools/aksjer.py). Appen viser bare. */
+const AK_TABS = [["minervini", "Minervini"], ["vekst", "Vekst"], ["verdi", "Verdi"], ["alle", "Alle"]];
+const AK_SORT = {
+  minervini: [["sepa", "Treff"], ["rs", "Relativ styrke"], ["rev_yoy", "Omsetning å/å"], ["eps_yoy", "Resultat å/å"]],
+  vekst: [["rev_yoy", "Omsetning å/å"], ["rev_qoq", "Omsetning kvartal"], ["eps_yoy", "Resultat å/å"], ["rs", "Relativ styrke"]],
+  verdi: [["v", "Verdi-treff"], ["peg", "PEG (lavest)"], ["pe_fwd", "Forventet P/E (lavest)"], ["fcf_yield", "Fri kontantstrøm"], ["roe", "ROE"]],
+  alle: [["sepa", "Minervini"], ["rs", "Relativ styrke"], ["market_cap", "Størrelse"], ["rev_yoy", "Omsetning å/å"]],
+};
+const AK_LAV = new Set(["peg", "pe_fwd"]);
+const AK_LAND = {US: "USA", NO: "Norge", SE: "Sverige", DK: "Danmark", FI: "Finland", DE: "Tyskland", NL: "Nederland", FR: "Frankrike", GB: "Storbritannia", CA: "Canada"};
+const akVal = (x, k) => k === "sepa" ? (x.t_ok || 0) + (x.f_ok || 0) : k === "v" ? (x.v_kjent >= 4 ? x.v_ok : -1) : (typeof x[k] === "number" ? x[k] : null);
+function akChecks(kode, def){
+  return (def || []).map((c, i) => { const v = (kode || "")[i];
+    return `<div class="lrow"><div class="lco">${esc(c.navn)}</div><div class="lt"><span class="mac ${v === "1" ? "g" : v === "0" ? "r" : "n"}">${v === "1" ? "Ja" : v === "0" ? "Nei" : "Ukjent"}</span></div></div>`; }).join("");
+}
+function akRad(x, tab, d){
+  const open = S.akOpen === x.ticker, mid = {
+    minervini: `Oms. ${pctF(x.rev_yoy)} å/å · Res. ${pctF(x.eps_yoy)}`,
+    vekst: `Oms. ${pctF(x.rev_yoy)} å/å, ${pctF(x.rev_qoq)} kv.`,
+    verdi: `PEG ${x.peg == null ? "–" : x.peg.toLocaleString("nb-NO", {maximumFractionDigits: 2})} · P/E ${x.pe_fwd == null ? "–" : x.pe_fwd.toLocaleString("nb-NO", {maximumFractionDigits: 1})} · FCF ${x.fcf_yield == null ? "–" : x.fcf_yield.toLocaleString("nb-NO", {maximumFractionDigits: 1}) + " %"}`,
+    alle: `Oms. ${pctF(x.rev_yoy)} å/å`}[tab];
+  const fm = (v, dd = 1, suf = "") => v == null ? "–" : v.toLocaleString("nb-NO", {maximumFractionDigits: dd}) + suf;
+  const farge = (ok, kj, maks) => !kj ? "n" : ok >= maks - 1 ? "g" : ok >= maks - 3 ? "y" : "n";
+  return `<div class="rmitem"><button class="rmhead" data-ako="${esc(x.ticker)}" aria-expanded="${open}">
+    <span class="lco"><b>${esc(x.display_name || x.name || x.ticker)}</b><span class="muted">${esc(x.ticker)} · ${esc(AK_LAND[x.region] || x.region || "")} · ${esc(x.sector || "")}</span></span>
+    <span class="rmmid"><span class="tnum" style="font-size:13px">${mid}</span></span>
+    <span class="rmend">${x.rs != null ? `<span class="tnum muted" style="font-size:12px" title="Relativ styrke 1 til 99">RS ${x.rs}</span>` : ""}
+      ${tab === "verdi" ? `<span class="mac ${farge(x.v_ok, x.v_kjent >= 4, 7)}">${x.v_ok}/${x.v_kjent}</span>` : `<span class="mac ${farge(x.t_ok, x.t_kjent >= 6, 8)}" title="Trend template">T ${x.t_ok}/${x.t_kjent}</span><span class="mac ${farge(x.f_ok, x.f_kjent >= 4, 7)}" title="Fundamentalt">F ${x.f_ok}/${x.f_kjent}</span>`}</span></button>
+    ${open ? `<div class="rmdet stack">
+      <div class="kv">
+        <div>Omsetning å/å<b class="${tone(x.rev_yoy)}">${pctF(x.rev_yoy, 1)}</b></div><div>Omsetning kvartal<b class="${tone(x.rev_qoq)}">${pctF(x.rev_qoq, 1)}</b></div>
+        <div>Resultat å/å<b class="${tone(x.eps_yoy)}">${pctF(x.eps_yoy, 1)}</b></div><div>Resultat kvartal<b class="${tone(x.eps_qoq)}">${pctF(x.eps_qoq, 1)}</b></div>
+        <div>Driftsmargin<b>${fm(x.op_margin, 1, " %")}${x.op_margin_1y != null ? ` <span class="muted" style="font-size:12px">(før ${fm(x.op_margin_1y, 1, " %")})</span>` : ""}</b></div><div>Nettomargin<b>${fm(x.margin, 1, " %")}</b></div>
+        <div>ROE<b>${fm(x.roe, 1, " %")}</b></div><div>Gjeld/EK<b>${fm(x.de, 2)}</b></div>
+        <div>PEG<b>${fm(x.peg, 2)}</b></div><div>Forventet P/E<b>${fm(x.pe_fwd, 1)}</b></div>
+        <div>EV/EBITDA<b>${fm(x.ev_ebitda, 1)}</b></div><div>Fri kontantstrøm<b>${fm(x.fcf_yield, 1, " %")}</b></div>
+        <div>Kursmål-oppside<b>${pctF(x.target_upside, 0)}</b></div><div>Fra 200-dagers<b>${x.px != null && x.sma200 ? pctF((x.px / x.sma200 - 1) * 100, 1) : "–"}</b></div>
+        <div>3 / 12 mnd<b>${pctF(x.r3m, 0)} / ${pctF(x.r12m, 0)}</b></div><div>Verdi<b>${x.market_cap == null ? "–" : fm(x.market_cap / 1e9, 1) + " mrd " + esc(x.currency || "")}</b></div>
+      </div>
+      <div class="eyebrow">Minervini, trend template · ${x.t_ok} av ${x.t_kjent} kjente</div><div class="notes">${akChecks(x.t, d.def?.t)}</div>
+      <div class="eyebrow">Minervini, fundamentalt · ${x.f_ok} av ${x.f_kjent} kjente</div><div class="notes">${akChecks(x.f, d.def?.f)}</div>
+      <div class="eyebrow">Verdi · ${x.v_ok} av ${x.v_kjent} kjente</div><div class="notes">${akChecks(x.v, d.def?.v)}</div>
+      ${x.ask_eligible ? `<p class="muted" style="font-size:13px;margin:0">Kan holdes i aksjesparekonto.</p>` : ""}
+    </div>` : ""}</div>`;
+}
+function vAksjer(){
+  const d = S.aks, tab = AK_TABS.some(t => t[0] === S.akTab) ? S.akTab : "minervini";
+  const sorter = AK_SORT[tab], so = sorter.some(t => t[0] === S.akSort) ? S.akSort : sorter[0][0];
+  let l = d.aksjer.slice();
+  if (S.akLand) l = l.filter(x => x.region === S.akLand);
+  if (tab === "vekst") l = l.filter(x => typeof x.rev_yoy === "number" && x.rev_yoy >= 25);
+  if (tab === "verdi") l = l.filter(x => x.v_kjent >= 4);
+  if (tab === "minervini") l = l.filter(x => x.t_kjent >= 6);
+  const lav = AK_LAV.has(so);
+  if (lav) l = l.filter(x => typeof x[so] === "number" && x[so] > 0);
+  l.sort((a, b) => { const x = akVal(a, so), y = akVal(b, so); if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return lav ? x - y : y - x; });
+  const maks = S.akMaks || 40, vis = l.slice(0, maks), alder = d.date ? dayNum() - dayNum(d.date) : null;
+  const land = Object.entries(d.regioner || {}).sort((a, b) => b[1] - a[1]);
+  const tekst = {minervini: "Sortert på hvor mange av Minervinis 15 krav aksjen oppfyller (8 tekniske og 7 fundamentale). Bare aksjer med minst seks kjente tekniske tall er med.",
+    vekst: "Omsetning opp minst 25 % år over år, sortert etter valget under.", verdi: "Enkle verdimål: PEG, forventet P/E, EV/EBITDA, fri kontantstrøm, margin, gjeld og ROE. Ikke en fair-value-modell.", alle: "Hele universet som ga data."}[tab];
+  return `<div class="stack">
+    <div class="panel stack">
+      <div class="spread"><h2>Aksjer</h2><span class="muted tnum" style="font-size:13px">${esc(d.date)}${alder != null && alder > 9 ? ` · ${alder} d gammel` : ""}</span></div>
+      <div class="subtabs">${AK_TABS.map(([k, n]) => `<button class="btn small ${tab === k ? "primary" : ""}" data-akt="${k}">${n}</button>`).join("")}</div>
+      <div class="chips"><button class="chip ${!S.akLand ? "sel" : ""}" data-akl="" aria-pressed="${!S.akLand}">Alle land</button>${land.map(([k, n]) => `<button class="chip ${S.akLand === k ? "sel" : ""}" data-akl="${esc(k)}" aria-pressed="${S.akLand === k}">${esc(AK_LAND[k] || k)}<span class="cnt tnum">${n}</span></button>`).join("")}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="muted" style="font-size:12px">Sorter</span>${sorter.map(([k, n]) => `<button class="btn small ${so === k ? "primary" : ""}" data-aks="${k}">${n}</button>`).join("")}</div>
+      <p class="muted" style="font-size:13px;margin:0">${esc(tekst)} ${l.length} aksjer.</p>
+      <div class="notes">${vis.map(x => akRad(x, tab, d)).join("") || `<p class="muted">Ingen aksjer treffer filteret.</p>`}</div>
+      ${l.length > vis.length ? `<div><button class="btn small" id="ak-mer">Vis ${Math.min(40, l.length - vis.length)} til (${vis.length} av ${l.length})</button></div>` : ""}
+    </div>
+    <p class="muted" style="font-size:12px">Hentet ${d.hentet} av ${d.univers} aksjer${d.feilet?.length ? ` (${d.feilet.length} ga ikke data hos kilden)` : ""}. ${d.rs_regnet ? `Relativ styrke er prosentilrangen (1 til 99) til vektet 3, 6, 9 og 12 måneders avkastning blant de ${d.rs_grunnlag} aksjene med full historikk.` : "Relativ styrke ble ikke regnet (for få aksjer med full historikk)."} Resultatvekst er nettoresultat. Ukjent betyr at kilden mangler tallet og telles aldri som nei. ${esc(d.merknad || "")}</p>
+  </div>`;
+}
+function vScreener(){ return S.aks && (S.aks.aksjer || []).length ? vAksjer() : vScreenerGammel(); }
+
+function vScreenerGammel(){
   const d = S.scr;
   if (!d || !(d.aksjer || []).length) return `<div class="panel stack"><h2>Aksjer</h2><p class="muted">Aksje-screeneren hentes fra MarketAnalyzor (ukentlig). Første kjøring legger den inn i dag.</p></div>`;
   const tab = SC_TABS.some(t => t[0] === S.scTab) ? S.scTab : "vekst";
@@ -3451,6 +3537,11 @@ document.addEventListener("click", async e => {
   const rsr = t.closest("[data-rms]"); if (rsr) { S.rmSort = rsr.dataset.rms; render(); return true; }
   const rmo = t.closest("[data-rmo]"); if (rmo) { S.rmOpen = S.rmOpen === rmo.dataset.rmo ? null : rmo.dataset.rmo; render(); return true; }
   if (t.id === "rm-alle") { S.rmAlle = !S.rmAlle; render(); return true; }
+  const akt = t.closest("[data-akt]"); if (akt) { S.akTab = akt.dataset.akt; S.akSort = null; S.akOpen = null; S.akMaks = 40; store.set("mp.aktab", S.akTab); render(); return true; }
+  const akl = t.closest("[data-akl]"); if (akl) { S.akLand = akl.dataset.akl || null; S.akMaks = 40; render(); return true; }
+  const aks = t.closest("[data-aks]"); if (aks) { S.akSort = aks.dataset.aks; S.akMaks = 40; render(); return true; }
+  const ako = t.closest("[data-ako]"); if (ako) { S.akOpen = S.akOpen === ako.dataset.ako ? null : ako.dataset.ako; render(); return true; }
+  if (t.id === "ak-mer") { S.akMaks = (S.akMaks || 40) + 40; render(); return true; }
   const sct = t.closest("[data-sct]"); if (sct) { S.scTab = sct.dataset.sct; S.scSort = null; S.scOpen = null; store.set("mp.sctab", S.scTab); render(); return true; }
   const scs = t.closest("[data-scs]"); if (scs) { S.scSort = scs.dataset.scs; render(); return true; }
   const sco = t.closest("[data-sco]"); if (sco) { S.scOpen = S.scOpen === sco.dataset.sco ? null : sco.dataset.sco; render(); return true; }
@@ -3648,7 +3739,7 @@ function loadLearnDoc(path, key, def){
     .catch(() => { if (key === "G") S.G = def(); else S.L[key] = def(); S.Lloaded[key] = true; render(); });
 }
 async function boot(){
-  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
+  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; S.akTab = store.get("mp.aktab") || "minervini"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
   go(VIEWS.includes(h) ? h : (store.get("mp.view") || "idag"));
   loadGeo(); loadHist();
   const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
@@ -3672,6 +3763,7 @@ async function boot(){
   db.doc("varsel/innstillinger").onSnapshot(s2 => { S.varselInns = s2.exists ? thaw(s2) : null; if (S.view === "idag") render(); }, () => {});
   db.doc("varsel/abonnement").onSnapshot(s2 => { S.varselSubs = s2.exists ? (thaw(s2).subs || []) : []; if (S.view === "idag") render(); }, () => {});
   db.collection("markedma").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.ma = snap.docs[0] ? thaw(snap.docs[0]) : null; const n = $("#n-marked"); if (n) n.textContent = (S.ma?.toppliste || []).filter(x => x.stage === 2).length || ""; if (S.view === "marked" || S.view === "idag") render(); }, () => {});
+  db.collection("aksjer").orderBy("date", "desc").limit(4).onSnapshot(snap => { S.aks = snap.docs.map(d => thaw(d)).sort((a, b) => String(b.generert || "").localeCompare(String(a.generert || "")))[0] || null; if (S.view === "marked" && S.mSub === "screener") render(); }, () => {});
   db.collection("screener").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.scr = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "marked" && S.mSub === "screener") render(); }, () => {});
   db.collection("maaned").orderBy("maaned", "desc").limit(12).onSnapshot(snap => { S.maaneder = snap.docs.map(d => thaw(d)); if (inV("maaned") || (S.view === "rapport" && S.rapSub === "maaned")) render(); }, () => {});
   db.collection("kalender").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kal = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "idag") render(); }, () => {});
