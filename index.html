@@ -1049,6 +1049,7 @@ function formDager(n = 14){
   const per = {};
   for (const x of S.sovn || []) if (x.dag) (per[x.dag] = per[x.dag] || {dag: x.dag}).sovn = x.minutter || null;
   for (const x of S.form || []) if (x.dag) { const o = (per[x.dag] = per[x.dag] || {dag: x.dag}); o.hrv = x.hrv || null; o.bb = x.body_battery || null; }
+  for (const x of S.gdag || []) if (x.dag && (x.bb_maks != null || x.bb_min != null)) { const o = (per[x.dag] = per[x.dag] || {dag: x.dag}); o.bb = Object.assign({}, o.bb, {hoy: x.bb_maks ?? o.bb?.hoy, lav: x.bb_min ?? o.bb?.lav}); }
   return Object.values(per).sort((a, b) => String(a.dag).localeCompare(String(b.dag))).slice(-n);
 }
 function miniChart(vals, o = {}){
@@ -1090,8 +1091,73 @@ function dagsform(){
   const mangler = sjekk.filter(x => !x[1]).map(x => x[0]);
   return {del, sjekk, mangler, tekst: del.length ? del.join(", ").replace(/^./, c => c.toUpperCase()) + "." : "", logg: sjekk.length ? (mangler.length ? "I går mangler logging av " + mangler.join(" og ") + "." : "Gårsdagens logging er komplett.") : ""};
 }
+
+/* Garmin-dagstall (dag-<dato>) og søvnmål (sovnmaal-<dato>) lagres av tools/garmin.py.
+   Ukene er mandag til søndag. Appen regner bare snitt og endring, ingen tolkning. */
+const mandagAv = d => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7)); return t.toISOString().slice(0, 10); };
+function garminPerDag(){
+  const per = {};
+  const g = d => per[d] = per[d] || {dag: d};
+  for (const x of S.sovn || []) if (x.dag) g(x.dag).sovn = x.minutter || null;
+  for (const x of S.form || []) if (x.dag) { const o = g(x.dag); o.hrv = x.hrv?.natt_snitt ?? null; o.bb = x.body_battery?.hoy ?? null; }
+  for (const x of S.gsm || []) if (x.dag) { const o = g(x.dag); Object.assign(o, {score: x.score ?? null, dyp: x.dyp_min ?? null, rem: x.rem_min ?? null, lett: x.lett_min ?? null, vaaken: x.vaaken_min ?? null, spo2: x.spo2_snitt ?? null, resp: x.resp_snitt ?? null, scoreTekst: x.score_tekst || null}); if (o.sovn == null && x.sovn_min) o.sovn = x.sovn_min; }
+  for (const x of S.gdag || []) if (x.dag) { const o = g(x.dag); Object.assign(o, {hvile: x.hvilepuls ?? null, pmin: x.puls_min ?? null, pmaks: x.puls_maks ?? null, steg: x.steg ?? null, kcal: x.kcal_aktiv ?? null, imod: x.intensitet_mod ?? null, ihoy: x.intensitet_hoy ?? null, stress: x.stress_snitt ?? null}); if (x.bb_maks != null) o.bb = x.bb_maks; }
+  return per;
+}
+const UKEMAAL = [
+  ["Søvn per natt", "sovn", fmtT, 1, "snitt"], ["Søvnscore", "score", v => Math.round(v) + "", 1, "snitt"],
+  ["HRV, natt-snitt", "hrv", v => Math.round(v) + " ms", 1, "snitt"], ["Hvilepuls", "hvile", v => Math.round(v) + " bpm", -1, "snitt"],
+  ["Skritt per dag", "steg", v => Math.round(v).toLocaleString("nb-NO"), 1, "snitt"], ["Aktive minutter per uke", "akt", v => Math.round(v) + " min", 1, "sum"],
+  ["Stress, snitt", "stress", v => Math.round(v) + "", -1, "snitt"], ["Body Battery, høyest", "bb", v => Math.round(v) + "", 1, "snitt"],
+];
+function ukeTrender(antall = 8){
+  const per = Object.values(garminPerDag()).map(o => Object.assign(o, {akt: o.imod != null || o.ihoy != null ? (o.imod || 0) + (o.ihoy || 0) : null}));
+  const uker = {};
+  for (const o of per) (uker[mandagAv(o.dag)] = uker[mandagAv(o.dag)] || []).push(o);
+  const nøkler = Object.keys(uker).sort().slice(-antall);
+  if (!nøkler.length) return "";
+  const idag = mandagAv(osloDate());
+  const rader = UKEMAAL.map(([navn, f, vis, retn, agg]) => {
+    const verd = nøkler.map(k => { const v = uker[k].map(o => o[f]).filter(x => x != null); return v.length >= 3 || (agg === "sum" && v.length >= 3) ? (agg === "sum" ? v.reduce((a, b) => a + b, 0) * 7 / v.length : v.reduce((a, b) => a + b, 0) / v.length) : null; });
+    const ix = verd.map((v, i) => v != null ? i : -1).filter(i => i >= 0); if (!ix.length) return "";
+    const nå = verd[ix[ix.length - 1]], før = ix.length > 1 && ix[ix.length - 1] - ix[ix.length - 2] === 1 ? verd[ix[ix.length - 2]] : null;
+    const dl = før != null ? nå - før : null, pst = før ? dl / før * 100 : null;
+    const pågår = nøkler[ix[ix.length - 1]] === idag;
+    return `<div class="lrow"><div class="lco"><b>${navn}</b><span class="muted" style="font-size:12px">${pågår ? "denne uka, pågår" : "uke " + esc(nøkler[ix[ix.length - 1]].slice(5))}</span></div><div class="lt"><div class="row" style="gap:10px;align-items:center;justify-content:space-between"><span class="tnum" style="min-width:96px"><b>${vis(nå)}</b>${pst != null && Math.abs(pst) >= 0.5 ? ` <span class="${tone(pst * retn)}" style="font-size:12px">${pst > 0 ? "+" : "−"}${Math.abs(pst).toLocaleString("nb-NO", {maximumFractionDigits: 0})} %</span>` : ""}</span><span style="width:110px;flex:none">${miniChart(verd, {w: 110, h: 24, label: navn + " per uke"})}</span></div></div></div>`;
+  }).join("");
+  if (!rader.trim()) return "";
+  return `<div class="panel stack"><div class="spread"><h2>Ukestrender</h2><span class="muted" style="font-size:12px">siste ${nøkler.length} uker, mandag til søndag</span></div><div class="notes">${rader}</div>
+    <p class="muted" style="font-size:12px;margin:0">En uke vises når den har minst tre dager med tall. Grønn er bedre enn uka før (lavere hvilepuls og stress regnes som bedre). Aktive minutter er moderat pluss høy intensitet, skalert til sju dager. Garmins egne beregninger, ikke kliniske mål.</p></div>`;
+}
+function dagKort(){
+  const per = garminPerDag(), d = Object.values(per).sort((a, b) => a.dag.localeCompare(b.dag));
+  const sist = f => [...d].reverse().find(x => x[f] != null);
+  const rekke = (f, n = 14) => d.slice(-n).map(x => x[f] ?? null);
+  const t = (navn, x, verdi, notat, spark) => x ? `<div class="tile static"><span class="lab">${navn}${x.dag ? " · " + esc(x.dag.slice(8) + "." + x.dag.slice(5, 7)) : ""}</span><span class="big tnum">${verdi}</span><span class="muted" style="font-size:12px">${notat || ""}</span>${spark ? `<div style="width:100%">${miniChart(spark, {w: 120, h: 22, label: navn})}</div>` : ""}</div>` : "";
+  const h = sist("hvile"), p = sist("pmaks"), a = sist("imod") || sist("ihoy"), s = sist("score"), f = sist("dyp"), st = sist("steg"), o = sist("spo2");
+  const kort = [
+    t("Hvilepuls", h, h && Math.round(h.hvile) + "<small> bpm</small>", "", rekke("hvile")),
+    t("Snitt og makspuls", p, p && `${p.pmin != null ? Math.round(p.pmin) : "–"} / ${Math.round(p.pmaks)}<small> bpm</small>`, "laveste og høyeste i døgnet"),
+    t("Aktive minutter", a, a && Math.round((a.imod || 0) + (a.ihoy || 0)) + "<small> min</small>", a && `${a.imod || 0} moderat, ${a.ihoy || 0} høy`, d.slice(-14).map(x => x.imod != null || x.ihoy != null ? (x.imod || 0) + (x.ihoy || 0) : null)),
+    t("Skritt", st, st && Math.round(st.steg).toLocaleString("nb-NO"), "", rekke("steg")),
+    t("Søvnscore", s, s && Math.round(s.score) + "<small> av 100</small>", s?.scoreTekst ? esc(String(s.scoreTekst).toLowerCase()) : "", rekke("score")),
+    t("Søvnfaser", f, f && fmtT(f.dyp) + "<small> dyp</small>", f && `REM ${fmtT(f.rem)}, lett ${fmtT(f.lett)}, våken ${fmtT(f.vaaken)}`),
+    t("SpO2 og respirasjon i søvn", o, o && Math.round(o.spo2) + "<small> %</small>", o && o.resp != null ? Math.round(o.resp) + " pust/min" : ""),
+  ].filter(Boolean);
+  if (!kort.length) return "";
+  return `<div class="panel stack"><h2>Siste fra Garmin</h2><div class="tiles">${kort.join("")}</div></div>`;
+}
+function sovnFaser(){
+  const n = Object.values(garminPerDag()).filter(x => x.dyp != null).sort((a, b) => a.dag.localeCompare(b.dag)).slice(-14);
+  if (n.length < 3) return "";
+  const mx = Math.max(...n.map(x => (x.dyp || 0) + (x.rem || 0) + (x.lett || 0) + (x.vaaken || 0)), 1);
+  const seg = (m, bg) => m ? `<div style="height:${(m / mx * 100).toFixed(1)}%;background:${bg}" title="${m} min"></div>` : "";
+  return `<div class="panel stack"><div class="spread"><h2>Søvnfaser</h2><span class="muted" style="font-size:12px">siste ${n.length} netter</span></div>
+    <div style="display:flex;gap:4px;align-items:flex-end;height:110px" role="img" aria-label="Søvnfaser per natt">${n.map(x => `<div style="flex:1;height:100%;display:flex;flex-direction:column-reverse;justify-content:flex-start" title="${esc(x.dag)}: ${fmtT(x.sovn)}">${seg(x.dyp, "var(--accent)")}${seg(x.rem, "color-mix(in srgb, var(--accent) 60%, transparent)")}${seg(x.lett, "color-mix(in srgb, var(--accent) 30%, transparent)")}${seg(x.vaaken, "var(--line)")}</div>`).join("")}</div>
+    <div class="muted" style="font-size:12px;display:flex;gap:12px;flex-wrap:wrap"><span><span style="color:var(--accent)">■</span> dyp</span><span><span style="color:color-mix(in srgb, var(--accent) 60%, transparent)">■</span> REM</span><span><span style="color:color-mix(in srgb, var(--accent) 30%, transparent)">■</span> lett</span><span><span style="color:var(--line)">■</span> våken</span><span>${esc(n[0].dag.slice(8) + "." + n[0].dag.slice(5, 7))} til ${esc(n[n.length - 1].dag.slice(8) + "." + n[n.length - 1].dag.slice(5, 7))}</span></div></div>`;
+}
 function vForm(){
-  const d = formDager(14), harData = d.some(x => x.sovn || x.hrv || x.bb);
+  const d = formDager(14), harData = d.some(x => x.sovn || x.hrv || x.bb) || (S.gdag || []).length > 0;
   if (!harData) return `<div class="stack"><div class="panel stack"><h2>Form</h2>
     <p class="muted">Ingen Garmin-data ennå. Søvn, HRV og Body Battery hentes av kjøringen og krever hemmeligheten GARMIN_API_KEY i repoet. Uten den står resten av appen som før.</p></div>${vSovn()}</div>`;
   const siste = d[d.length - 1], alder = dayNum() - dayNum(siste.dag);
@@ -1113,6 +1179,9 @@ function vForm(){
       </div>
       ${dfm.logg ? `<p class="muted" style="font-size:13px;margin:0">${esc(dfm.logg)}</p>` : ""}
     </div>
+    ${dagKort()}
+    ${ukeTrender()}
+    ${sovnFaser()}
     ${kort("Søvn", x => x.sovn ?? null, fmtT, {label: "Søvnlengde siste 14 dager", min: 0})}
     ${kort("HRV, natt-snitt", x => x.hrv?.natt_snitt ?? null, v => Math.round(v) + " ms", {label: "HRV siste 14 dager", band: hrvBand}, hrvBand ? `<p class="muted" style="font-size:12px;margin:0">Det grønne feltet er Garmins normalområde for deg (${Math.round(hrvBand[0])} til ${Math.round(hrvBand[1])} ms).</p>` : "")}
     ${kort("Body Battery, høyeste", x => x.bb?.hoy ?? null, v => String(Math.round(v)), {label: "Body Battery siste 14 dager", min: 0, max: 100})}
@@ -1637,8 +1706,7 @@ function vSovn(){
   const timer = m => Math.floor(m / 60) + " t " + String(m % 60).padStart(2, "0") + " min";
   if (!d || d.sri === null || d.sri === undefined) return `<div class="panel stack">
     <h2>Søvnregularitet</h2>
-    <p class="muted">Ingen søvndata ennå. Henting fra Garmin krever hemmeligheten GARMIN_API_KEY i repoet. Uten den står resten av appen som før.</p>
-    ${netter.length ? `<p class="muted" style="font-size:13px">${netter.length} netter er lagret, men indeksen trenger minst ${esc(String((S.sri?.min_par) || 7))} nabopar.</p>` : ""}</div>`;
+    ${netter.length ? `<p class="muted">${netter.length} netter er lagret. Indeksen trenger minst ${esc(String((S.sri?.min_par) || 7))} nabopar av netter og regnes ved neste kjøring.</p>` : `<p class="muted">Ingen søvndata ennå. Henting fra Garmin krever hemmeligheten GARMIN_API_KEY i repoet.</p>`}</div>`;
   const v = d.sri, oevre = (d.kvintiler?.oevre_fire || [71.6, 98.5])[0];
   const farge = d.mistenkelig ? "err" : v >= oevre ? "ok" : v >= 60 ? "" : "err";
   const sorter = [...netter].sort((a, b) => String(a.dag).localeCompare(String(b.dag)));
@@ -3800,8 +3868,14 @@ async function boot(){
   db.collection("kalender").orderBy("date", "desc").limit(1).onSnapshot(snap => { S.kal = snap.docs[0] ? thaw(snap.docs[0]) : null; if (S.view === "idag") render(); }, () => {});
   db.doc("effekt/oversikt").onSnapshot(s2 => { S.effekt = s2.exists ? thaw(s2) : null; if (inV("uke") && S.ukeSub === "endringer") render(); }, () => {});
   db.collection("debrief").orderBy("uke", "desc").limit(26).onSnapshot(snap => { S.debriefer = snap.docs.map(d => thaw(d)); const n = $("#n-rapport"); const venter = S.debriefer.filter(x => x.status !== "ferdig" && (x.hendelser || []).length >= (x.krav_hendelser || 3)).length; if (n) n.textContent = venter || ""; if (inV("uke")) render(); }, () => {});
-  db.doc("helse/sri").onSnapshot(s2 => { S.sri = s2.exists ? thaw(s2) : null; if (S.view === "helse" || S.view === "idag") render(); }, () => {});
-  db.collection("helse").orderBy("dag", "desc").limit(90).onSnapshot(snap => { const alle = snap.docs.map(d => thaw(d)); S.sovn = alle.filter(d => d.vinduer); S.form = alle.filter(d => d.hrv || d.body_battery); if (S.view === "helse" || S.view === "idag") render(); }, () => {});
+  db.collection("helse").orderBy("dag", "desc").limit(500).onSnapshot(snap => {
+    const alle = snap.docs.map(d => thaw(d));
+    S.sovn = alle.filter(d => d.vinduer); S.form = alle.filter(d => d.hrv || d.body_battery);
+    S.gdag = alle.filter(d => d.type === "dag"); S.gsm = alle.filter(d => d.type === "sovnmaal");
+    // Søvnregularitet: den nyeste daterte utgaven. Den gamle sri.json står fast på første tall.
+    S.sri = alle.filter(d => d.kvintiler).sort((a, b) => String(b.dag).localeCompare(String(a.dag)))[0] || null;
+    if (S.view === "helse" || S.view === "idag") render();
+  }, () => {});
   db.doc("trading/risiko").onSnapshot(s => { S.risiko = s.exists ? thaw(s) : null; if (inV("trading")) render(); }, () => {});
   db.collection("short").orderBy("date", "desc").limit(2).onSnapshot(snap => { S.short = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "short") render(); }, () => {});
   db.collection("nasdaq").orderBy("date", "desc").limit(5).onSnapshot(snap => { S.nasdaq = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "news") render(); }, () => {});
