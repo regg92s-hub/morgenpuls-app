@@ -443,8 +443,14 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
     const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction("kv", mode); const q = fn(t.objectStore("kv")); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); };
     return { get: k => tx("readonly", s => s.get(k)), set: (k, v) => tx("readwrite", s => s.put(v, k)), del: k => tx("readwrite", s => s.delete(k)) }; })();
 
-  let token = null;
-  const gh = (path, opt = {}) => fetch(API + path, { ...opt, headers: { Authorization: "Bearer " + token, Accept: opt.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(opt.headers || {}) }, cache: "no-store" });
+  let token = null, wtoken = null, EXP = {};
+  // Utloepsdatoen for noekkelen staar i svarheaderen github-authentication-token-expiration. Om nettleseren faar lese den
+  // (CORS) er ikke verifisert, saa datoen kan ogsaa legges inn for haand i statusvinduet. Ukjent vises som ukjent.
+  const noteExp = (r, hvilken) => { try { const e = r.headers.get("github-authentication-token-expiration"); if (e && EXP[hvilken] !== e) { EXP[hvilken] = e; KV.set("exp", EXP).catch(() => {}); } } catch {} return r; };
+  const ghMed = (tok, hvilken) => async (path, opt = {}) => noteExp(await fetch(API + path, { ...opt, headers: { Authorization: "Bearer " + tok(), Accept: opt.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(opt.headers || {}) }, cache: "no-store" }), hvilken);
+  const gh = ghMed(() => token, "les");
+  // Skriving kan ha egen noekkel (bare Contents: Read and write). Da kan lesenoekkelen som ligger paa enheten vaere skrivebeskyttet.
+  const ghw = ghMed(() => wtoken || token, "skriv");
   const b64 = s => { const u = new TextEncoder().encode(s); let bin = ""; const C = 0x8000; for (let i = 0; i < u.length; i += C) bin += String.fromCharCode.apply(null, u.subarray(i, i + C)); return btoa(bin); };
   const clone = v => v == null ? v : JSON.parse(JSON.stringify(v));
   const now = () => new Date().toISOString();
@@ -563,12 +569,12 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       ? { message: `App: slett ${path}`, sha, branch: BRANCH }
       : { message: `App: ${sha ? "oppdater" : "ny"} ${path}`, content: b64(JSON.stringify(item.data, null, 1) + "\n"), sha: sha || undefined, branch: BRANCH };
     if (op === "delete" && !sha) return true;            // alt borte fra før
-    let r = await gh(`${R}/contents/${encodeURI(FILE(path))}`, { method: op === "delete" ? "DELETE" : "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+    let r = await ghw(`${R}/contents/${encodeURI(FILE(path))}`, { method: op === "delete" ? "DELETE" : "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
     if (r.status === 409 || r.status === 422) {          // noen andre skrev imens: hent fersk sha og prøv én gang til
       if (OV[path]) OV[path].sha = null;
       sha = await shaOf(path);
       body.sha = sha || undefined; if (op === "delete" && !sha) return true;
-      r = await gh(`${R}/contents/${encodeURI(FILE(path))}`, { method: op === "delete" ? "DELETE" : "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+      r = await ghw(`${R}/contents/${encodeURI(FILE(path))}`, { method: op === "delete" ? "DELETE" : "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
     }
     if (r.status === 401) throw Object.assign(new Error("Nøkkelen ble ikke godtatt"), { auth: true });
     if (r.status === 403) throw Object.assign(new Error("Nøkkelen mangler skrivetilgang til repoet"), { auth: true });
@@ -587,6 +593,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
         try { await pushOne(item); Q.shift(); lastErr = null; save(); }
         catch (e) {
           lastErr = e.message || "Fikk ikke lagret";
+          if (e.auth && wtoken) { await KV.del("wtoken").catch(() => {}); wtoken = null; lastErr = lastErr + ". Skrivenøkkelen er fjernet, legg inn en ny under Status."; break; }
           if (e.auth) { await KV.del("token"); token = await gate(lastErr + ". Lag en ny nøkkel med skrivetilgang."); lastErr = null; continue; }
           break;                                          // nett eller GitHub nede: prøv igjen senere
         }
@@ -737,6 +744,10 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
   }
   const prikk = ok => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ok === true ? "var(--ok,#1f8a4c)" : ok === false ? "var(--accent,#d7262e)" : "var(--warn,#b26a00)"}"></span>`;
 
+  let EXPM = "";
+  const dagerTil = iso => { const t = Date.parse(iso); return isNaN(t) ? null : Math.ceil((t - Date.now()) / 864e5); };
+  const utloep = hvilken => EXP[hvilken] || (hvilken === "les" && EXPM ? EXPM : null);
+  const utloepTekst = hvilken => { const e = utloep(hvilken), d = e ? dagerTil(e) : null; return d == null ? "utløpsdato ukjent" : d < 0 ? "utløpt for " + (-d) + " dager siden" : "utløper om " + d + " dager (" + String(e).slice(0, 10) + ")"; };
   function settings() {
     const g = document.createElement("div"); g.className = "mpgate";
     const st = docVal("system/status") || {};
@@ -764,14 +775,21 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       <p><b>Siste ti dager</b><br><span class="muted" style="font-size:13px">Finans, nyheter, helse og 36MA. Grått betyr at det venter eller mangler.</span></p>
       <table class="mptab"><thead><tr><th>Dag</th><th>Fin</th><th>Nyh</th><th>Hel</th><th>36MA</th><th></th></tr></thead><tbody>${dagrader}</tbody></table>
       <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%">
+      <p><b>Nøkler</b><br><span class="muted" style="font-size:13px">Lesenøkkelen: ${esc(utloepTekst("les"))}. Skrivenøkkel: ${wtoken ? esc(utloepTekst("skriv")) : "ikke satt, lesenøkkelen brukes også til å skrive"}. Anbefalt: lesenøkkel som bare kan lese i 90 dager, og en egen skrivenøkkel med kort levetid.</span></p>
+      <div class="row"><input id="mpwt" class="txt" type="password" autocomplete="off" placeholder="Skrivenøkkel (valgfri)" style="flex:1;min-width:180px"><button class="btn" id="mpwtlagre" type="button">Lagre</button>${wtoken ? '<button class="btn" id="mpwtfjern" type="button">Fjern</button>' : ""}</div>
+      <div class="row"><label class="muted" style="font-size:13px" for="mpexp">Lesenøkkelen utløper (hvis datoen ikke leses automatisk)</label><input id="mpexp" type="date" class="txt" value="${esc(EXPM || "")}"><button class="btn" id="mpexplagre" type="button">Lagre dato</button></div>
+      <hr style="border:0;border-top:1px solid var(--line,#ddd);width:100%">
       <p><b>Fjern alt fra denne enheten</b><br><span class="muted" style="font-size:13px">Sletter nøkkelen og alt som er lagret lokalt, og henter alt på nytt neste gang. Repoet påvirkes ikke. Endringer som ikke er lagret ennå, går tapt.</span></p>
       <div class="row"><button class="btn" id="mpdel" type="button" style="color:var(--accent,#d7262e)">Fjern nøkkel og data</button></div></div>`;
     document.body.appendChild(g);
     g.querySelector("#mpx").onclick = () => g.remove();
+    g.querySelector("#mpwtlagre").onclick = async () => { const v = g.querySelector("#mpwt").value.trim(); if (!v) return; wtoken = v; await KV.set("wtoken", v).catch(() => {}); g.remove(); settings(); };
+    const wf = g.querySelector("#mpwtfjern"); if (wf) wf.onclick = async () => { wtoken = null; await KV.del("wtoken").catch(() => {}); g.remove(); settings(); };
+    g.querySelector("#mpexplagre").onclick = async () => { EXPM = g.querySelector("#mpexp").value || ""; await KV.set("expm", EXPM).catch(() => {}); g.remove(); settings(); };
     g.querySelector("#mpref").onclick = async () => { g.remove(); await refresh(); };
     const qb = g.querySelector("#mpq"); if (qb) qb.onclick = async () => { g.remove(); await pump(); };
     g.querySelector("#mpny").onclick = async () => { g.remove(); await KV.del("token").catch(() => {}); token = await gate("Lim inn den nye nøkkelen. Alt du har lagret lokalt beholdes."); postAssets(); await refresh(); };
-    g.querySelector("#mpdel").onclick = async () => { for (const k of ["token", "bundle", "ov", "meta", "queue"]) await KV.del(k).catch(() => {}); try { await caches.delete("mp-assets"); } catch {} location.reload(); };
+    g.querySelector("#mpdel").onclick = async () => { for (const k of ["token", "wtoken", "exp", "expm", "bundle", "ov", "meta", "queue"]) await KV.del(k).catch(() => {}); try { await caches.delete("mp-assets"); } catch {} location.reload(); };
   }
 
   function postAssets() { navigator.serviceWorker?.controller?.postMessage({ type: "cfg", token, assets: BUNDLE.assets || {} }); }
@@ -789,6 +807,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       navigator.serviceWorker.addEventListener("controllerchange", postAssets);
     }
     token = await KV.get("token").catch(() => null);
+    EXPM = (await KV.get("expm").catch(() => null)) || ""; wtoken = await KV.get("wtoken").catch(() => null); EXP = (await KV.get("exp").catch(() => null)) || {};
     if (!token) token = await gate();
     BUNDLE = (await KV.get("bundle").catch(() => null)) || BUNDLE;
     OV = (await KV.get("ov").catch(() => null)) || Object.create(null);
@@ -818,7 +837,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
   }
   async function gjenopprett(path, sha) { const d = await hentVersjon(path, sha); await write(path, "set", d); return d; }
 
-  window.__mp = { refresh, pump, pull, historikk, hentVersjon, gjenopprett,
+  window.__mp = { refresh, pump, pull, historikk, hentVersjon, gjenopprett, utloep: () => { const o = {}; for (const k of ["les", "skriv"]) { const e = utloep(k); o[k] = e ? { dato: String(e).slice(0, 10), dager: dagerTil(e) } : null; } return o; },
     state: () => ({ head: META.head, bundle: BUNDLE.generated_at, kø: Q.length, overlay: Object.keys(OV).length, feil: lastErr }) };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();
@@ -861,7 +880,7 @@ const feed = () => S.feeds[S.feedIdx] || null;
 /* ---------- navigasjon ---------- */
 const VIEWS = ["idag","helse","finans","marked","nyheter","verktoy","laering","rapport","notater","sok"];
 // Gamle navn (lenker, varsler, lagret fane) peker til sin plass i de nye fanene.
-const ALIAS = {trading: ["verktoy", "trading"], kokk: ["verktoy", "kokk"], gitar: ["verktoy", "gitar"], uke: ["rapport", "uke"]};
+const ALIAS = {trading: ["verktoy", "trading"], kokk: ["verktoy", "kokk"], gitar: ["verktoy", "gitar"], uke: ["rapport", "uke"], beslutning: ["verktoy", "beslutning"]};
 const inV = n => S.view === n || (ALIAS[n] && S.view === ALIAS[n][0]);
 function go(v){ if (ALIAS[v]) { const [vw, sub] = ALIAS[v]; if (vw === "verktoy") S.vkSub = sub; if (vw === "rapport") S.rapSub = sub; v = vw; }
   if (!VIEWS.includes(v)) v = "idag"; S.view = v; try { history.replaceState(null, "", "#" + v); } catch {} store.set("mp.view", v);
@@ -989,15 +1008,18 @@ function vToday(){
     <button class="tile" data-go="nyheter"><span class="big tnum">${w ? w.items.length : "–"}</span><span class="lab">nyhetssaker</span></button>
     <button class="tile" data-go="laering"><span class="big tnum">${S.Lloaded.geo || S.Lloaded.hist ? dueCount("geo") + dueCount("hist") + dueCount("own") + dueCount("vg3") : "–"}</span><span class="lab">kort i dag</span></button>
   </div>
+  ${briefCard()}
   ${marketPulse()}
   ${kalCard()}
   ${dagsformCard()}
+  ${sporsmalCard()}
   ${S.db ? varselPanel() : ""}
   ${S.db ? journalCard() : ""}
   ${S.trading ? `<button class="panel trline" data-go="trading"><span class="eyebrow">Trading</span><span class="tnum"><b>${usd(S.trading.equity)}</b> <span class="${tone(S.trading.return_pct)}">${sgn(S.trading.return_pct, " %")}</span></span><span class="muted tnum">${(S.trading.positions || []).length ? (S.trading.positions || []).map(p => `${esc(p.symbol)} ${sgn(p.pct, " %")}`).join(" · ") : "Ingen åpne posisjoner"}</span></button>` : ""}
   ${top ? `<div class="stack"><div class="eyebrow">Dagens studie</div>${studyCard(top)}</div>` : ""}
   ${fi?.items?.length ? `<div class="stack"><div class="spread"><div class="eyebrow">Fra selskapene dine</div><button class="btn small ghost" data-go="finans">Alle</button></div>${fi.items.slice(0,3).map(newsCard).join("")}</div>` : ""}
   ${tpN ? `<div class="panel tp"><div>${wedges()}</div><div class="stack" style="flex:1;min-width:180px"><h3>Dagens huskestue</h3><p class="muted">${tpDone}/${tpN} besvart</p><div><button class="btn primary small" data-go="laering" data-sub="tp">${tpDone >= tpN ? "Se svarene" : "Spill"}</button></div></div></div>` : ""}
+  ${kilderPanel()}
   ${!f ? emptyFeed("oppdateringer") : ""}`;
 }
 
@@ -1036,9 +1058,10 @@ function followPanel(h){
   </div>`;
 }
 function vHealth(){
-  const sub = S.hSub === "form" || S.hSub === "sovn" ? "form" : "studier";
-  const tabs = `<div class="subtabs">${[["studier","Studier"],["form","Form"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-hsub="${k}">${l}</button>`).join("")}</div>`;
+  const sub = S.hSub === "form" || S.hSub === "sovn" ? "form" : S.hSub === "labb" ? "labb" : "studier";
+  const tabs = `<div class="subtabs">${[["studier","Studier"],["form","Form"],["labb","Labb"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-hsub="${k}">${l}</button>`).join("")}</div>`;
   if (sub === "form") return `<div class="stack">${tabs}${vForm()}</div>`;
+  if (sub === "labb") return `<div class="stack">${tabs}${vLabb()}</div>`;
   return tabs + vStudier();
 }
 /* Form. Søvn, HRV og Body Battery fra Garmin samlet i ett bilde. Tallene
@@ -1180,6 +1203,7 @@ function vForm(){
       ${dfm.logg ? `<p class="muted" style="font-size:13px;margin:0">${esc(dfm.logg)}</p>` : ""}
     </div>
     ${dagKort()}
+    ${formNytt()}
     ${ukeTrender()}
     ${sovnFaser()}
     ${kort("Søvn", x => x.sovn ?? null, fmtT, {label: "Søvnlengde siste 14 dager", min: 0})}
@@ -1207,9 +1231,10 @@ function mSpark(sp){
   return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="${sp[sp.length - 1] >= sp[0] ? "var(--ok)" : "var(--accent)"}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
 }
 function vMarked(){
-  const sub = S.mSub === "roadmap" || S.mSub === "screener" || S.mSub === "makro" ? S.mSub : "status";
-  const tabs = `<div class="subtabs">${[["status","Status"],["roadmap","Roadmaps"],["screener","Aksjer"],["makro","Makro og uran"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
+  const sub = S.mSub === "roadmap" || S.mSub === "screener" || S.mSub === "makro" || S.mSub === "mer" ? S.mSub : "status";
+  const tabs = `<div class="subtabs">${[["status","Status"],["roadmap","Roadmaps"],["screener","Aksjer"],["makro","Makro og uran"],["mer","Kontekst"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
   if (sub === "makro") return `<div class="stack">${tabs}${vMakro()}</div>`;
+  if (sub === "mer") return `<div class="stack">${tabs}${vMarkedMer()}</div>`;
   if (sub === "screener") return `<div class="stack">${tabs}${vScreener()}</div>`;
   const d = S.ma;
   if (!d || d.status !== "ok") return `<div class="stack">${tabs}<div class="panel stack"><h2>Marked</h2>
@@ -1516,10 +1541,268 @@ function scRad(x){
 }
 
 /* ---------- verktøy ---------- */
+/*NYTT-START*/
+/* ---------- nye paneler (november 2026) ----------
+   Alt her viser tall som koden har regnet ut i kjøringen. Appen regner ikke om noe,
+   med ett unntak: planBeregn, som har samme aritmetikk som tools/handelsplan.py og
+   krysstestes mot den (tools/tester/test_plan_krysstest.cjs). Ingenting her er råd. */
+const NY = {friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null,
+  plan: null, planer: [], labb: [], beslutning: [], sporsmal: [], varsel: [], vo2: [], soner: [], akt: [], sig: null, planNy: false, ventSvar: null};
+const nTall = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("nb-NO", {maximumFractionDigits: d, minimumFractionDigits: 0});
+const kortDato = s => s ? String(s).slice(8, 10) + "." + String(s).slice(5, 7) + "." : "–";
+const daysSince = s => s ? dayNum() - dayNum(String(s).slice(0, 10)) : null;
+function nyAbonner(db){
+  const on = (path, fn, view) => { try { db.collection(path).onSnapshot(snap => { fn(snap.docs.map(d => ({id: d.id, ...thaw(d)}))); if (view && view()) render(); }, () => {}); } catch {} };
+  const senest = (a, n = 1) => a.slice().sort((x, y) => String(y.date || y.id).localeCompare(String(x.date || x.id))).slice(0, n);
+  db.doc("system/friskhet").onSnapshot(s => { NY.friskhet = s.exists ? thaw(s) : null; if (S.view === "idag") render(); }, () => {});
+  db.doc("system/backup").onSnapshot(s => { NY.backup = s.exists ? thaw(s) : null; }, () => {});
+  db.doc("system/skjemafeil").onSnapshot(s => { NY.skjemafeil = s.exists ? thaw(s) : null; }, () => {});
+  on("brief", a => { NY.brief = senest(a)[0] || null; }, () => S.view === "idag");
+  on("cot", a => { NY.cot = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("norsk", a => { NY.norsk = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("strom", a => { NY.strom = senest(a, 2); }, () => S.view === "marked" && S.mSub === "mer");
+  on("hendelser", a => { NY.hendelser = senest(a.filter(x => (x.hendelser || []).length || !(x.feil || []).length))[0] || null; }, () => (S.view === "marked" && S.mSub === "mer") || S.view === "idag");
+  on("pivot", a => { NY.pivot = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("innsider", a => { NY.innsider = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("plan", a => { NY.plan = senest(a.filter(x => x.type === "plan"))[0] || null; }, () => inV("trading"));
+  on("handelsplan", a => { NY.planer = a.sort((x, y) => String(y.opprettet || y.id).localeCompare(String(x.opprettet || x.id))); }, () => inV("trading"));
+  on("labb", a => { NY.labb = a; }, () => S.view === "helse" && S.hSub === "labb");
+  on("beslutning", a => { NY.beslutning = a.sort((x, y) => String(y.opprettet || y.id).localeCompare(String(x.opprettet || x.id))); }, () => inV("beslutning"));
+  on("sporsmal", a => { NY.sporsmal = a.sort((x, y) => String(y.opprettet || y.id).localeCompare(String(x.opprettet || x.id))).slice(0, 40); }, () => S.view === "idag");
+  on("varselmotor", a => { NY.varsel = a.filter(x => x.type === "varsel").sort((x, y) => String(y.oppdaget || y.id).localeCompare(String(x.oppdaget || x.id))).slice(0, 12); }, () => false);
+}
+
+/* --- Kilder: hvor ferske dataene er, per kilde --- */
+function kilderPanel(){
+  const f = NY.friskhet; if (!f) return "";
+  const k = f.kilder || [], gammelFil = daysSince(f.dag) > 0;
+  const bad = k.filter(x => x.status !== "ok" && x.status !== "ikke_satt_opp"), ok = k.filter(x => x.status === "ok").length;
+  const lab = {ok: "ok", gammel: "gammel", mangler: "mangler", ikke_satt_opp: "ikke satt opp"};
+  const rad = x => `<div class="lrow"><div class="lco"><b>${esc(x.navn)}</b><span class="muted">${esc(x.melding || "")}</span></div><div class="lt"><span class="pill ${x.status === "ok" ? "ok" : x.status === "ikke_satt_opp" ? "" : "warn"}">${esc(lab[x.status] || x.status)}</span> <span class="muted tnum">${esc(kortDato(x.sist_dato))}</span></div></div>`;
+  const sf = Object.keys((NY.skjemafeil || {}).feil || {}).length;
+  const b = NY.backup, ut = window.__mp?.utloep ? window.__mp.utloep() : null, nokkel = ut && ut.les ? ut.les : null;
+  const nokkelTekst = !nokkel ? "Utløpsdato for nøkkelen er ukjent. Legg den inn under Status." : nokkel.dager < 0 ? "Lesenøkkelen er utløpt." : "Lesenøkkelen utløper om " + nokkel.dager + " dager (" + nokkel.dato + ").";
+  return `<details class="panel"><summary style="cursor:pointer"><b>Kilder</b> <span class="${bad.length || gammelFil || sf || (nokkel && nokkel.dager < 14) ? "warn" : "muted"}" style="font-size:13px">${nokkel && nokkel.dager < 14 ? "nøkkelen utløper snart · " : ""}${ok} av ${k.length} ferske${bad.length ? " · " + bad.length + " trenger oppmerksomhet" : ""}${gammelFil ? " · statusfilen er fra " + esc(f.dag) : ""}${sf ? " · " + sf + " fil(er) avvist av skjemakontroll" : ""}</span></summary>
+    <div class="notes" style="margin-top:8px">${k.map(rad).join("")}</div>
+    <p class="${nokkel && nokkel.dager < 14 ? "warn" : "muted"}" style="font-size:12px;margin:8px 0 0">${esc(nokkelTekst)}</p>
+    ${b ? `<p class="muted" style="font-size:12px;margin:8px 0 0">Siste backup: ${esc(b.navn || "")} ${b.proevd ? "(gjenopprettingsprøve bestått)" : ""}</p>` : `<p class="muted" style="font-size:12px;margin:8px 0 0">Backup er ikke satt opp (BACKUP_PASSPHRASE mangler). Se RECOVERY.md.</p>`}
+    ${NY.varsel.length ? `<div class="eyebrow" style="margin-top:8px">Siste varsler</div>${NY.varsel.slice(0, 5).map(v => `<div class="muted" style="font-size:13px">${esc(String(v.dag || "").slice(5))} · ${esc(v.tittel || "")}: ${esc(v.tekst || "")}</div>`).join("")}` : ""}
+  </details>`;
+}
+
+/* --- Morgenbrief: avvik først, så tekst. AI-teksten vises bare hvis koden har godkjent den --- */
+function briefCard(){
+  const b = NY.brief; if (!b) return "";
+  const av = (b.kode && b.kode.bare_avvik) || [], ai = b.ai && b.ai.status === "ok" ? b.ai.tekst : null;
+  return `<div class="panel stack"><div class="spread"><h2>Morgenbrief</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(b.date))} · ${ai ? "AI-tekst, tall satt inn og kontrollert av kode" : "regelbasert"}</span></div>
+    <div class="eyebrow">Bare avvik</div>
+    ${av.length ? `<div class="notes">${av.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.kategori)}</b></div><div class="lt">${esc(x.tekst)}</div></div>`).join("")}</div>` : `<p class="muted" style="margin:0">Ingen avvik fra det normale.</p>`}
+    <p style="margin:0">${esc(ai || (b.kode && b.kode.tekst) || "")}</p></div>`;
+}
+
+/* --- Spørsmål mot egne data (Actions + Anthropic API) --- */
+function sporsmalCard(){
+  if (!S.db) return "";
+  const svar = {}; NY.sporsmal.forEach(x => { if (x.sporsmal_id) svar[x.sporsmal_id] = x; });
+  const q = NY.sporsmal.filter(x => x.sporsmal && !x.sporsmal_id).slice(0, 3);
+  return `<div class="panel stack"><h2>Spør dataene dine</h2>
+    <form id="sporform" class="row"><input id="sporin" class="txt" style="flex:1;min-width:200px" maxlength="300" placeholder="For eksempel: hvordan har HRV vært siste uka?" aria-label="Spørsmål"><button class="btn primary small" type="submit">Spør</button></form>
+    ${q.map(x => { const s = svar[x.id]; return `<div class="stack" style="gap:2px"><b style="font-size:14px">${esc(x.sporsmal)}</b>${s ? `<span class="${s.status === "ok" ? "" : "muted"}">${esc(s.tekst || "")}</span>` : `<span class="muted">Venter på svar fra kjøringen (ca. ett minutt).</span>`}</div>`; }).join("")}
+    <p class="muted" style="font-size:12px;margin:0">Svaret bygger på tall koden har regnet ut. Tall som ikke kommer fra listen avvises. Maks 20 svar per dag.</p></div>`;
+}
+async function sendSporsmal(){
+  const el = $("#sporin"), t = (el?.value || "").trim(); if (!t || !S.db) return;
+  if (t.length > 300) { toast("Maks 300 tegn"); return; }
+  const id = "q" + Date.now().toString(36);
+  try { await S.db.doc("sporsmal/" + id).set({sporsmal: t, opprettet: new Date().toISOString(), date: osloDate()}); toast("Sendt. Svaret kommer om litt."); el.value = ""; } catch (err) { toast(writeErr(err)); }
+}
+
+/* --- Form: signal, skritt-bånd, VO2max, pulssoner, aktiviteter --- */
+function formNytt(){
+  const sig = NY.sig, vo = NY.vo2[0], so = NY.soner[0], akt = NY.akt.slice(0, 6);
+  const dager = (S.gdag || []).filter(x => x.steg != null).sort((a, b) => String(a.dag).localeCompare(String(b.dag)));
+  const sist7 = dager.slice(-7), snitt = a => a.length ? a.reduce((s, x) => s + x.steg, 0) / a.length : null;
+  const s7 = sist7.length >= 4 ? snitt(sist7) : null, s28 = dager.length >= 14 ? snitt(dager.slice(-28)) : null;
+  const sd = dager.length >= 14 ? (() => { const v = dager.slice(-28).map(x => x.steg), m = snitt(dager.slice(-28)); return Math.sqrt(v.reduce((s, x) => s + (x - m) ** 2, 0) / v.length); })() : null;
+  const flagg = sig && sig.flagg;
+  const sigDel = sig ? `<div class="panel stack"><div class="spread"><h2>Gjenopprettingssignal</h2><span class="pill ${flagg ? "warn" : "ok"}">${flagg ? "avviker" : "ingen flagg"}</span></div>
+    <p style="margin:0">${esc(sig.tekst || "")}</p>
+    ${flagg ? `<p class="warn" style="margin:0">Minst to av tre signaler ligger mer enn ett standardavvik fra din egen norm tre døgn på rad: ${(sig.avviker || []).map(esc).join(", ")}.</p>` : ""}
+    <p class="muted" style="font-size:12px;margin:0">Regelen: HRV, hvilepuls og søvnscore mot de 28 døgnene før de tre siste. Beskriver avvik, er ikke en diagnose.</p></div>` : "";
+  const skritt = s7 != null ? `<div class="panel stack"><div class="spread"><b>Skritt</b><span class="muted tnum" style="font-size:12px">snitt 7 d: ${nTall(s7, 0)}${s28 != null ? " · norm 28 d: " + nTall(s28, 0) + " ± " + nTall(sd, 0) : ""}</span></div>
+    ${miniChart(dager.slice(-28).map(x => x.steg), {label: "Skritt siste 28 dager", min: 0, band: s28 != null ? [s28 - sd, s28 + sd] : null})}</div>` : "";
+  const vo2 = vo ? `<div class="tile static"><span class="big tnum">${nTall(vo.vo2max, 1)}</span><span class="lab">VO2max ${esc(kortDato(vo.dag))}</span></div>` : "";
+  const soner = so ? `<div class="panel stack"><div class="spread"><b>Pulssoner</b><span class="muted tnum" style="font-size:12px">makspuls ${nTall(so.maks_puls, 0)} · fra ${esc(kortDato(so.dag))}</span></div>
+    <div class="row" style="gap:6px;flex-wrap:wrap">${[1, 2, 3, 4, 5].map(i => `<span class="chip">Sone ${i}: ${nTall(so["sone" + i + "_fra"], 0)}${i < 5 ? "–" + (so["sone" + (i + 1) + "_fra"] - 1) : "+"}</span>`).join("")}</div></div>` : "";
+  const lop = akt.length ? `<div class="panel stack"><h2>Siste aktiviteter</h2><div class="notes">${akt.map(a => `<div class="lrow"><div class="lco"><b>${esc(a.navn || a.sport || "Aktivitet")}</b><span class="muted">${esc(kortDato(a.dag))} · ${esc(a.sport || "")}</span></div><div class="lt tnum">${a.distanse_m ? nTall(a.distanse_m / 1000, 1) + " km · " : ""}${a.varighet_s ? Math.round(a.varighet_s / 60) + " min" : ""}${a.puls_snitt ? " · " + nTall(a.puls_snitt, 0) + " slag" : ""}</div></div>`).join("")}</div></div>` : "";
+  return sigDel + (vo2 ? `<div class="tiles">${vo2}</div>` : "") + skritt + soner + lop;
+}
+
+/* --- Labb: egne målinger mot laboratoriets referanseområde. Bare registrering, ingen tolkning --- */
+function vLabb(){
+  const per = {}; NY.labb.forEach(x => { (per[x.navn] = per[x.navn] || []).push(x); });
+  const navn = Object.keys(per).sort((a, b) => a.localeCompare(b, "nb"));
+  const rad = n => { const a = per[n].sort((x, y) => String(y.dag).localeCompare(String(x.dag))), s = a[0], d = daysSince(s.dag);
+    const ut = s.ref_lav != null && s.verdi < s.ref_lav ? "under" : s.ref_hoy != null && s.verdi > s.ref_hoy ? "over" : (s.ref_lav != null || s.ref_hoy != null) ? "innenfor" : "";
+    return `<div class="lrow"><div class="lco"><b>${esc(n)}</b><span class="muted">sist målt for ${d} dager siden (${esc(s.dag)}) · ${a.length} måling${a.length === 1 ? "" : "er"}</span></div>
+      <div class="lt"><span class="tnum"><b>${nTall(s.verdi, 2)}</b> ${esc(s.enhet)}</span>${ut ? ` <span class="pill ${ut === "innenfor" ? "ok" : "warn"}">${ut} referanse</span>` : ""}${s.ref_lav != null || s.ref_hoy != null ? `<span class="muted" style="font-size:12px;display:block">referanse ${s.ref_lav ?? "–"} til ${s.ref_hoy ?? "–"}</span>` : ""}</div></div>`; };
+  return `<div class="stack"><div class="panel stack"><h2>Legg inn måling</h2>
+    <form id="labbform" class="stack"><div class="row"><input id="lb-navn" class="txt" style="flex:2;min-width:140px" placeholder="Navn, f.eks. Ferritin" list="lb-liste" required><datalist id="lb-liste">${navn.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      <input id="lb-dag" class="txt" type="date" value="${osloDate()}" required><input id="lb-verdi" class="txt" type="number" step="any" placeholder="Verdi" style="flex:1;min-width:90px" required><input id="lb-enhet" class="txt" placeholder="Enhet" style="flex:1;min-width:80px" required></div>
+      <div class="row"><input id="lb-lav" class="txt" type="number" step="any" placeholder="Referanse fra" style="flex:1"><input id="lb-hoy" class="txt" type="number" step="any" placeholder="Referanse til" style="flex:1"><button class="btn primary small" type="submit">Lagre</button></div></form>
+    <p class="muted" style="font-size:12px;margin:0">Referanseområdet skriver du av fra laboratoriets svar. Appen tolker ikke verdiene. Hver måling lagres som egen oppføring og endres ikke.</p></div>
+    <div class="panel stack"><h2>Siste målinger</h2>${navn.length ? `<div class="notes">${navn.map(rad).join("")}</div>` : `<p class="muted" style="margin:0">Ingen målinger ennå.</p>`}</div></div>`;
+}
+async function lagreLabb(){
+  const g = id => $("#" + id)?.value.trim(), tall = id => g(id) === "" || g(id) == null ? null : Number(g(id));
+  const navn = g("lb-navn"), dag = g("lb-dag"), verdi = tall("lb-verdi"), enhet = g("lb-enhet");
+  if (!navn || !dag || verdi == null || isNaN(verdi) || !enhet || !S.db) { toast("Fyll inn navn, dato, verdi og enhet"); return; }
+  const o = {dag, navn, verdi, enhet, opprettet: new Date().toISOString(), date: dag}; const lo = tall("lb-lav"), hi = tall("lb-hoy");
+  if (lo != null && !isNaN(lo)) o.ref_lav = lo; if (hi != null && !isNaN(hi)) o.ref_hoy = hi;
+  const id = (dag + "-" + navn.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")).slice(0, 60) + "-" + Date.now().toString(36).slice(-4);
+  try { await S.db.doc("labb/" + id).set(o); toast("Måling lagret"); } catch (err) { toast(writeErr(err)); }
+}
+
+/* --- Marked: kontekst (COT, norske tall, hendelser, pivot, innsidekjøp) --- */
+function vMarkedMer(){
+  const c = NY.cot, n = NY.norsk, s = NY.strom[0], h = NY.hendelser, p = NY.pivot, i = NY.innsider;
+  const tile = (stor, lab) => `<div class="tile static"><span class="big tnum">${stor}</span><span class="lab">${lab}</span></div>`;
+  const tiles = `<div class="tiles">${s ? tile(nTall(s.snitt, 2) + "<small> kr/kWh</small>", "strøm NO2 snitt " + esc(kortDato(s.date)) + " (laveste " + nTall(s.lav?.p, 2) + " kl " + esc(s.lav?.t || "") + ")") : ""}
+    ${n?.styringsrente ? tile(nTall(n.styringsrente.rente, 2) + "<small> %</small>", "styringsrente " + esc(kortDato(n.styringsrente.dato))) : ""}
+    ${n?.bolig ? tile(nTall(n.bolig.endring_4kv_pct, 1) + "<small> %</small>", "boligpriser 4 kv, " + esc(n.bolig.kvartal || "")) : ""}
+    ${n?.kpi ? tile(nTall(n.kpi.tolv_mnd_pct, 1) + "<small> %</small>", "KPI 12 mnd, " + esc(n.kpi.maaned || "")) : ""}</div>`;
+  const cot = c ? `<div class="panel stack"><div class="spread"><h2>Posisjonering (CFTC COT)</h2><span class="muted tnum" style="font-size:12px">per tirsdag ${esc(kortDato(c.date))}</span></div>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Marked</th><th>Netto, % av OI</th><th>Percentil 3 år</th><th>Endring uke</th></tr></thead><tbody>${(c.markeder || []).map(m => `<tr><td>${esc(m.navn)} <span class="muted" style="font-size:11px">${esc(m.gruppe)}</span></td><td class="tnum">${nTall(m.netto_pct, 1)}</td><td class="tnum ${m.pct_3aar != null && (m.pct_3aar >= 90 || m.pct_3aar <= 10) ? "warn" : ""}">${nTall(m.pct_3aar, 0)}</td><td class="tnum">${dTall(m.endring_uke)}</td></tr>`).join("")}</tbody></table></div>
+    <p class="muted" style="font-size:12px;margin:0">Spekulantenes netto posisjon i terminmarkedet, publisert fredag for tirsdag. Ytterkantene (over 90 eller under 10) er markert. Beskrivelse, ikke signal.</p></div>` : "";
+  const hs = h ? (h.hendelser || []).filter(x => x.dato >= osloDate()).slice(0, 14) : [];
+  const hend = `<div class="panel stack"><h2>Hendelser fremover</h2>${hs.length ? `<div class="notes">${hs.map(x => { const dg = daysSince(x.dato) * -1; return `<div class="lrow"><div class="lco"><b>${esc(x.tittel)}</b><span class="muted">${esc(x.art)}${x.ticker ? " · " + esc(x.ticker) : ""}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}<span class="muted" style="display:block;font-size:12px">${dg === 0 ? "i dag" : "om " + dg + " d"}</span></div></div>`; }).join("")}</div>` : `<p class="muted" style="margin:0">Ingen kommende hendelser registrert.</p>`}${(h?.feil || []).length ? `<p class="muted" style="font-size:12px;margin:0">${h.feil.length} henting(er) feilet i siste kjøring.</p>` : ""}</div>`;
+  const pr = p ? (p.rader || []).slice(0, 12) : [];
+  const piv = p ? `<div class="panel stack"><div class="spread"><h2>Avstand til pivot</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(p.date))}</span></div>
+    ${pr.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Ticker</th><th>Avstand, ATR</th><th>Status</th><th>Volum mot 50 d</th></tr></thead><tbody>${pr.map(r => `<tr><td><b>${esc(r.ticker)}</b></td><td class="tnum">${nTall(r.avstand_atr, 2)}</td><td>${esc(r.status)}</td><td class="tnum">${r.volum_rel != null ? nTall(r.volum_rel, 2) + "×" : "–"}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted" style="margin:0">Ingen rader med data.</p>`}
+    <p class="muted" style="font-size:12px;margin:0">${esc(p.def || "")}</p></div>` : "";
+  const ik = i ? (i.kjop || []).slice(0, 10) : [];
+  const inn = i ? `<div class="panel stack"><h2>Innsidekjøp (Form 4)</h2>${ik.length ? `<div class="notes">${ik.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.ticker)}</b><span class="muted">${esc(x.innsider || "")}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}${x.aksjer ? " · " + nTall(x.aksjer, 0) + " aksjer" : ""}</div></div>`).join("")}</div>` : `<p class="muted" style="margin:0">Ingen kjøp i det åpne markedet siste 90 dager for amerikanske selskaper du følger.</p>`}<p class="muted" style="font-size:12px;margin:0">${esc(i.merknad || "")}</p></div>` : "";
+  if (!tiles.includes("tile") && !c && !h && !p && !i) return `<div class="panel"><p class="muted" style="margin:0">Dataene kommer med neste kjøring.</p></div>`;
+  return `<div class="stack">${tiles}${hend}${cot}${piv}${inn}</div>`;
+}
+
+/* --- Handelsplan: aritmetikk på egne planer. Samme regler som tools/handelsplan.py --- */
+const PLAN_GRENSE = {risiko: 1.5, aapen: 7.5, eksp: 100};
+function planBeregn(p){
+  const tall = v => (v === null || v === undefined || v === "" || isNaN(Number(v))) ? null : Number(v);
+  const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+  const inn = tall(p.inngang), stop = tall(p.stop), mal = tall(p.mal);
+  let risiko = tall(p.risiko_pct); if (risiko === null) risiko = PLAN_GRENSE.risiko;
+  const brudd = [], ut = {id: p.id, symbol: p.symbol, status: p.status || "plan", risiko_pct: risiko};
+  if (p.retning !== undefined && p.retning !== null && p.retning !== "long") brudd.push("short_ikke_tillatt");
+  if (!inn || inn <= 0) return Object.assign(ut, {brudd: brudd.concat(["ingen_inngang"])});
+  if (!stop || stop <= 0) brudd.push("ingen_stop"); else if (stop >= inn) brudd.push("stop_over_inngang");
+  if (risiko > PLAN_GRENSE.risiko + 1e-9) brudd.push("risiko_over_grense");
+  if (mal !== null && mal <= inn) brudd.push("mal_under_inngang");
+  if (!brudd.includes("ingen_stop") && !brudd.includes("stop_over_inngang")) {
+    const tap = inn - stop, tapPct = 100 * tap / inn, vekt = risiko / (tapPct / 100);
+    ut.tap_pct = r2(tapPct); ut.vekt_pct = r2(vekt);
+    if (vekt > PLAN_GRENSE.eksp + 1e-9) brudd.push("krever_belaaning");
+    if (mal !== null && mal > inn) { ut.mal_r = r2((mal - inn) / tap); ut.rr_lav = ut.mal_r < 2.0; }
+    const pris = p.status === "lukket" ? tall(p.lukket_pris) : tall(p.pris);
+    if (pris) ut[p.status !== "lukket" ? "r_na" : "r_resultat"] = r2((pris - inn) / tap);
+  }
+  ut.brudd = brudd; return ut;
+}
+function planBeregnAlle(planer, r){
+  const rader = planer.map(planBeregn), vent = rader.filter(x => x.status === "plan" && !x.brudd.length);
+  const aapen = r && r.aapen_risiko_pct != null ? Number(r.aapen_risiko_pct) : null, eksp = Number((r && r.eksponering_pct) || 0);
+  const sr = vent.reduce((s, x) => s + x.risiko_pct, 0), sv = vent.reduce((s, x) => s + (x.vekt_pct || 0), 0), samlet = [];
+  if (aapen !== null && aapen + sr > PLAN_GRENSE.aapen + 1e-9) samlet.push("aapen_risiko_over_grense");
+  if (eksp + sv > PLAN_GRENSE.eksp + 1e-9) samlet.push("eksponering_over_grense");
+  return {planer: rader, samlet_brudd: samlet, aapen_risiko_etter_pct: aapen === null ? null : Math.round((aapen + sr + Number.EPSILON) * 100) / 100, eksponering_etter_pct: Math.round((eksp + sv + Number.EPSILON) * 100) / 100, risiko_ukjent: aapen === null};
+}
+const BRUDDTEKST = {ingen_inngang: "Mangler inngangskurs.", ingen_stop: "Mangler stop. Ingen plan uten stop.", stop_over_inngang: "Stop ligger ved eller over inngang (bare long).", risiko_over_grense: "Risikoen per handel er over 1,5 %.", krever_belaaning: "Krever belåning: vekten blir over 100 %.", mal_under_inngang: "Målet ligger under inngang.", short_ikke_tillatt: "Short er ikke tillatt.", aapen_risiko_over_grense: "Samlet åpen risiko ville gå over 7,5 %.", eksponering_over_grense: "Brutto eksponering ville gå over 100 %."};
+function planPanel(){
+  if (!S.db) return "";
+  const res = planBeregnAlle(NY.planer, S.risiko), per = {}; res.planer.forEach(x => { per[x.id] = x; });
+  const rad = p => { const b = per[p.id] || planBeregn(p);
+    return `<div class="posrow"><div class="pos-h"><b class="sym">${esc(p.symbol)}</b><span class="muted tnum">inn ${nTall(p.inngang, 2)} · stop ${nTall(p.stop, 2)}${p.mal ? " · mål " + nTall(p.mal, 2) : ""}</span><span class="pill ${p.status === "lukket" ? "" : "ok"}" style="margin-left:auto">${esc(p.status || "plan")}</span></div>
+      <div class="muted tnum" style="font-size:13px">${b.vekt_pct != null ? "vekt " + nTall(b.vekt_pct, 1) + " % · tap til stop " + nTall(b.tap_pct, 1) + " % · risiko " + nTall(b.risiko_pct, 1) + " %" : ""}${b.mal_r != null ? " · mål " + nTall(b.mal_r, 1) + " R" : ""}${b.r_na != null ? " · nå " + nTall(b.r_na, 1) + " R" : ""}${b.r_resultat != null ? " · resultat " + nTall(b.r_resultat, 1) + " R" : ""}</div>
+      ${b.rr_lav ? `<div class="warn" style="font-size:13px">Målet gir under 2 R.</div>` : ""}${(b.brudd || []).length ? `<div class="notice">${b.brudd.map(k => esc(BRUDDTEKST[k] || k)).join("<br>")}</div>` : ""}
+      <div class="row" style="gap:6px">${p.status === "plan" ? `<button class="btn small" data-plan="aktiv" data-pid="${esc(p.id)}">Markér aktiv</button>` : ""}${p.status !== "lukket" ? `<button class="btn small" data-plan="lukket" data-pid="${esc(p.id)}">Lukk</button>` : ""}</div></div>`; };
+  return `<div class="panel stack"><div class="spread"><h2>Handelsplan</h2><button class="btn small" id="plan-ny">${NY.planNy ? "Avbryt" : "Ny plan"}</button></div>
+    ${NY.planNy ? `<form id="planform" class="stack"><div class="row"><input id="pl-sym" class="txt" placeholder="Ticker" style="flex:1;min-width:90px" required><input id="pl-inn" class="txt" type="number" step="any" placeholder="Inngang" style="flex:1;min-width:90px" required><input id="pl-stop" class="txt" type="number" step="any" placeholder="Stop" style="flex:1;min-width:90px" required><input id="pl-mal" class="txt" type="number" step="any" placeholder="Mål" style="flex:1;min-width:90px"></div>
+      <div class="row"><input id="pl-ris" class="txt" type="number" step="any" placeholder="Risiko % (maks 1,5)" value="1.5" style="flex:1"><input id="pl-note" class="txt" placeholder="Begrunnelse" style="flex:3;min-width:160px"><button class="btn primary small" type="submit">Lagre plan</button></div></form>` : ""}
+    <div class="stack" style="gap:6px">${NY.planer.length ? NY.planer.map(rad).join("") : `<p class="muted" style="margin:0">Ingen planer.</p>`}</div>
+    ${res.samlet_brudd.length ? `<div class="notice">${res.samlet_brudd.map(k => esc(BRUDDTEKST[k] || k)).join("<br>")}</div>` : ""}
+    <div class="muted tnum" style="font-size:13px">Etter ventende planer: åpen risiko ${res.aapen_risiko_etter_pct == null ? "ukjent" : nTall(res.aapen_risiko_etter_pct, 1) + " %"} av 7,5 % · eksponering ${nTall(res.eksponering_etter_pct, 1)} % av 100 %</div>
+    <p class="muted" style="font-size:12px;margin:0">Alt i prosent av egenkapitalen, aldri kroner. Planen er aritmetikk på det du selv skriver inn. Ingen ordre sendes herfra.</p></div>`;
+}
+async function lagrePlan(){
+  const g = id => $("#" + id)?.value.trim(), t = id => g(id) === "" ? null : Number(g(id));
+  const o = {symbol: (g("pl-sym") || "").toUpperCase(), inngang: t("pl-inn"), stop: t("pl-stop"), mal: t("pl-mal"), risiko_pct: t("pl-ris"), begrunnelse: g("pl-note") || "", status: "plan", retning: "long", opprettet: new Date().toISOString(), date: osloDate()};
+  if (!o.symbol || !o.inngang || !o.stop || !S.db) { toast("Fyll inn ticker, inngang og stop"); return; }
+  if (o.mal == null) delete o.mal; if (o.risiko_pct == null) delete o.risiko_pct;
+  const id = osloDate() + "-" + o.symbol.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now().toString(36).slice(-4);
+  try { await S.db.doc("handelsplan/" + id).set(o); NY.planNy = false; toast("Plan lagret"); } catch (err) { toast(writeErr(err)); }
+}
+async function planStatus(id, st){
+  const p = NY.planer.find(x => x.id === id); if (!p || !S.db) return;
+  const o = Object.assign({}, p); delete o.id; o.status = st; o.endret = new Date().toISOString();
+  if (st === "lukket") { const v = prompt("Utgangskurs (tom hvis ukjent)"); if (v && !isNaN(Number(v.replace(",", ".")))) o.lukket_pris = Number(v.replace(",", ".")); }
+  try { await S.db.doc("handelsplan/" + id).set(o); toast("Plan oppdatert"); } catch (err) { toast(writeErr(err)); }
+}
+
+/* --- Beslutningslogg: hver oppføring er uforanderlig --- */
+function vBeslutning(){
+  const rad = x => `<div class="lrow"><div class="lco"><b>${esc(x.tittel)}</b><span class="muted">${esc(x.dag)}${x.kategori ? " · " + esc(x.kategori) : ""}</span>${x.begrunnelse ? `<span style="font-size:14px;display:block;margin-top:2px">${esc(x.begrunnelse)}</span>` : ""}${x.forventet ? `<span class="muted" style="font-size:13px;display:block">Forventet: ${esc(x.forventet)}</span>` : ""}</div></div>`;
+  return `<div class="stack"><div class="panel stack"><h2>Ny beslutning</h2>
+    <form id="beslform" class="stack"><input id="bs-tittel" class="txt" placeholder="Hva ble bestemt" required maxlength="160"><textarea id="bs-grunn" class="txt" rows="2" placeholder="Hvorfor"></textarea>
+      <div class="row"><input id="bs-forv" class="txt" style="flex:2;min-width:160px" placeholder="Hva forventer du, og når sjekker du det"><select id="bs-kat" class="txt" style="flex:1"><option>trading</option><option>helse</option><option>jobb</option><option>privat</option><option>annet</option></select><button class="btn primary small" type="submit">Logg</button></div></form>
+    <p class="muted" style="font-size:12px;margin:0">Oppføringer endres ikke etterpå. Det er poenget: du kan se tilbake på hva du visste da.</p></div>
+    <div class="panel stack"><h2>Logg</h2>${NY.beslutning.length ? `<div class="notes">${NY.beslutning.map(rad).join("")}</div>` : `<p class="muted" style="margin:0">Ingen oppføringer.</p>`}</div></div>`;
+}
+async function lagreBeslutning(){
+  const g = id => $("#" + id)?.value.trim(); const tittel = g("bs-tittel"); if (!tittel || !S.db) return;
+  const o = {tittel, begrunnelse: g("bs-grunn") || "", forventet: g("bs-forv") || "", kategori: $("#bs-kat")?.value || "annet", dag: osloDate(), date: osloDate(), opprettet: new Date().toISOString()};
+  try { await S.db.doc("beslutning/" + osloDate() + "-" + Date.now().toString(36)).set(o); toast("Beslutning logget"); } catch (err) { toast(writeErr(err)); }
+}
+
+/* --- Kommandopalett (Ctrl/Cmd + K) --- */
+const PALETT = [
+  ["Idag", () => go("idag")], ["Helse: form", () => { S.hSub = "form"; store.set("mp.hsub", "form"); go("helse"); }], ["Helse: labb", () => { S.hSub = "labb"; store.set("mp.hsub", "labb"); go("helse"); }],
+  ["Marked: kontekst (COT, hendelser, pivot)", () => { S.mSub = "mer"; store.set("mp.msub", "mer"); go("marked"); }], ["Marked: roadmaps", () => { S.mSub = "roadmap"; store.set("mp.msub", "roadmap"); go("marked"); }],
+  ["Trading og handelsplan", () => { S.vkSub = "trading"; store.set("mp.vksub", "trading"); go("verktoy"); }], ["Beslutningslogg", () => { S.vkSub = "beslutning"; store.set("mp.vksub", "beslutning"); go("verktoy"); }],
+  ["Hurtigfangst (ny innboks-oppføring)", () => { go("notater"); N.open = null; N.importing = false; N.capturing = true; render(); }],
+  ["Spør dataene dine", () => { go("idag"); setTimeout(() => $("#sporin")?.focus(), 80); }], ["Rapport", () => go("rapport")], ["Læring", () => go("laering")], ["Nyheter", () => go("nyheter")], ["Finans", () => go("finans")], ["Søk", () => go("sok")]];
+function palettApne(){
+  if ($("#palett")) { $("#palett").remove(); return; }
+  const d = document.createElement("div"); d.id = "palett"; d.className = "modal";
+  d.innerHTML = `<div class="sheet stack" role="dialog" aria-label="Kommandopalett"><input id="palin" class="txt" placeholder="Skriv for å velge (Enter åpner, Esc lukker)" autocomplete="off"><div id="palliste" class="stack" style="gap:2px"></div></div>`;
+  document.body.appendChild(d);
+  const inn = $("#palin"), liste = $("#palliste"); let valgt = 0, treff = PALETT;
+  const tegn = () => { liste.innerHTML = treff.map((x, i) => `<button class="btn small ${i === valgt ? "primary" : "ghost"}" style="text-align:left" data-pal="${i}">${esc(x[0])}</button>`).join("") || `<span class="muted">Ingen treff</span>`; };
+  const kjor = i => { const x = treff[i]; d.remove(); if (x) x[1](); };
+  inn.addEventListener("input", () => { const q = inn.value.trim().toLowerCase(); treff = PALETT.filter(x => x[0].toLowerCase().includes(q)); valgt = 0; tegn(); });
+  inn.addEventListener("keydown", e => { if (e.key === "Escape") d.remove(); else if (e.key === "ArrowDown") { valgt = Math.min(treff.length - 1, valgt + 1); tegn(); e.preventDefault(); } else if (e.key === "ArrowUp") { valgt = Math.max(0, valgt - 1); tegn(); e.preventDefault(); } else if (e.key === "Enter") { e.preventDefault(); kjor(valgt); } });
+  d.addEventListener("click", e => { const b = e.target.closest("[data-pal]"); if (b) kjor(Number(b.dataset.pal)); else if (e.target === d) d.remove(); });
+  tegn(); inn.focus();
+}
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); palettApne(); } });
+/* Klikk og skjema for de nye panelene. Returnerer true når hendelsen er håndtert. */
+async function nyKlikk(t){
+  if (t.id === "plan-ny") { NY.planNy = !NY.planNy; render(); return true; }
+  const pb = t.closest("[data-plan]"); if (pb) { await planStatus(pb.dataset.pid, pb.dataset.plan); return true; }
+  return false;
+}
+async function nyInnsending(f){
+  if (f.id === "sporform") { await sendSporsmal(); return true; }
+  if (f.id === "labbform") { await lagreLabb(); f.reset(); return true; }
+  if (f.id === "planform") { await lagrePlan(); return true; }
+  if (f.id === "beslform") { await lagreBeslutning(); f.reset(); return true; }
+  return false;
+}
+/*NYTT-END*/
 function vTools(){
-  const sub = ["trading","kokk","gitar"].includes(S.vkSub) ? S.vkSub : "trading";
-  const tabs = `<div class="subtabs">${[["trading","Trading"],["kokk","Kokk"],["gitar","Gitar"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-vksub="${k}">${l}</button>`).join("")}</div>`;
-  const body = sub === "kokk" ? vKitchen() : sub === "gitar" ? vGuitar() : vTrading();
+  const sub = ["trading","kokk","gitar","beslutning"].includes(S.vkSub) ? S.vkSub : "trading";
+  const tabs = `<div class="subtabs">${[["trading","Trading"],["kokk","Kokk"],["gitar","Gitar"],["beslutning","Beslutninger"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-vksub="${k}">${l}</button>`).join("")}</div>`;
+  const body = sub === "kokk" ? vKitchen() : sub === "gitar" ? vGuitar() : sub === "beslutning" ? vBeslutning() : vTrading();
   return `<div class="stack">${tabs}${body}</div>`;
 }
 
@@ -2646,6 +2929,7 @@ function vTrading(){
   </div>
   ${st.n !== undefined && !st.conclusive ? `<div class="notice">${esc(st.note || "")}</div>` : ""}
   ${vRisiko()}
+  ${planPanel()}
   <div class="panel stack"><div class="spread"><h2>Åpne posisjoner</h2><span class="muted tnum" style="font-size:13px">${pos.length} åpne · urealisert ${usd(openPnl)} · risiko til stopp ${usd(openRisk)}</span></div>
     ${pos.length ? pos.map(p => `<div class="posrow">
       <div class="pos-h"><b class="sym">${esc(p.symbol)}</b><span class="muted tnum">${esc(p.qty)} aksjer · inn ${usd(p.avg)}${p.opened ? " · " + esc(p.opened) : ""}</span><span class="tnum ${tone(p.pnl)}" style="margin-left:auto;font-weight:700">${usd(p.pnl)} <small>(${sgn(p.pct, " %")})</small></span></div>
@@ -3561,6 +3845,7 @@ const findNews = key => { for (const f of S.feeds) for (const [arr, o] of [[f.wo
 /* ---------- hendelser ---------- */
 document.addEventListener("click", async e => {
   const t = e.target;
+  if (await nyKlikk(t)) return;
   if (t.id === "varselpa") { varselSlaaPaa(); return true; }
   if (t.id === "varseltest") { varselTest(); return true; }
   if (t.id === "varselav2") { varselKobleFra(); return true; }
@@ -3716,6 +4001,7 @@ document.addEventListener("keydown", e => {
 });
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target;
+  if (await nyInnsending(f)) return;
   if (f.id === "addfollow") { const v = $("#followin").value.trim(); if (!v) return; const fl = (S.config?.health_follow || []).slice(); if (fl.some(x => x.label.toLowerCase() === v.toLowerCase())) { toast("Du følger allerede " + v); return; } fl.push({label: v}); await saveConfig({health_follow: fl}); return; }
   if (f.id === "addtheme") { const v = $("#themein").value.trim(); if (!v) return; const th = (S.config?.health_themes || []).slice(); th.push({label: v}); await saveConfig({health_themes: th}); return; }
   if (f.id === "noteform") { const r = curRecipe(), txt = $("#notein").value.trim(); if (!r || !txt) return;
@@ -3872,10 +4158,13 @@ async function boot(){
     const alle = snap.docs.map(d => thaw(d));
     S.sovn = alle.filter(d => d.vinduer); S.form = alle.filter(d => d.hrv || d.body_battery);
     S.gdag = alle.filter(d => d.type === "dag"); S.gsm = alle.filter(d => d.type === "sovnmaal");
+    const nyest = a => a.sort((x, y) => String(y.dag).localeCompare(String(x.dag)));
+    NY.vo2 = nyest(alle.filter(d => d.type === "vo2")); NY.soner = nyest(alle.filter(d => d.type === "pulssoner")); NY.akt = nyest(alle.filter(d => d.type === "aktivitet")); NY.sig = nyest(alle.filter(d => d.type === "signal"))[0] || null;
     // Søvnregularitet: den nyeste daterte utgaven. Den gamle sri.json står fast på første tall.
     S.sri = alle.filter(d => d.kvintiler).sort((a, b) => String(b.dag).localeCompare(String(a.dag)))[0] || null;
     if (S.view === "helse" || S.view === "idag") render();
   }, () => {});
+  nyAbonner(db);
   db.doc("trading/risiko").onSnapshot(s => { S.risiko = s.exists ? thaw(s) : null; if (inV("trading")) render(); }, () => {});
   db.collection("short").orderBy("date", "desc").limit(2).onSnapshot(snap => { S.short = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "short") render(); }, () => {});
   db.collection("nasdaq").orderBy("date", "desc").limit(5).onSnapshot(snap => { S.nasdaq = snap.docs.map(d => thaw(d)); if (S.view === "finans" && S.finSub === "news") render(); }, () => {});
