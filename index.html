@@ -1546,7 +1546,7 @@ function scRad(x){
    Alt her viser tall som koden har regnet ut i kjøringen. Appen regner ikke om noe,
    med ett unntak: planBeregn, som har samme aritmetikk som tools/handelsplan.py og
    krysstestes mot den (tools/tester/test_plan_krysstest.cjs). Ingenting her er råd. */
-const NY = {friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null,
+const NY = {friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null, sentiment: null, iv: null, kelly: null, longevity: null, bioalder: null, merk: [], merkAnalyse: null,
   plan: null, planer: [], labb: [], beslutning: [], sporsmal: [], varsel: [], vo2: [], soner: [], akt: [], sig: null, planNy: false, ventSvar: null};
 const nTall = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("nb-NO", {maximumFractionDigits: d, minimumFractionDigits: 0});
 const kortDato = s => s ? String(s).slice(8, 10) + "." + String(s).slice(5, 7) + "." : "–";
@@ -1564,6 +1564,13 @@ function nyAbonner(db){
   on("hendelser", a => { NY.hendelser = senest(a.filter(x => (x.hendelser || []).length || !(x.feil || []).length))[0] || null; }, () => (S.view === "marked" && S.mSub === "mer") || S.view === "idag");
   on("pivot", a => { NY.pivot = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
   on("innsider", a => { NY.innsider = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("sentiment", a => { NY.sentiment = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("iv", a => { NY.iv = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("kelly", a => { NY.kelly = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("longevity", a => { NY.longevity = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
+  on("biologisk_alder", a => { NY.bioalder = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
+  on("merkinger", a => { NY.merk = a; }, () => S.view === "helse" && S.hSub === "labb");
+  on("merkinger_analyse", a => { NY.merkAnalyse = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
   on("plan", a => { NY.plan = senest(a.filter(x => x.type === "plan"))[0] || null; }, () => inV("trading"));
   on("handelsplan", a => { NY.planer = a.sort((x, y) => String(y.opprettet || y.id).localeCompare(String(x.opprettet || x.id))); }, () => inV("trading"));
   on("labb", a => { NY.labb = a; }, () => S.view === "helse" && S.hSub === "labb");
@@ -1646,7 +1653,7 @@ function vLabb(){
     const ut = s.ref_lav != null && s.verdi < s.ref_lav ? "under" : s.ref_hoy != null && s.verdi > s.ref_hoy ? "over" : (s.ref_lav != null || s.ref_hoy != null) ? "innenfor" : "";
     return `<div class="lrow"><div class="lco"><b>${esc(n)}</b><span class="muted">sist målt for ${d} dager siden (${esc(s.dag)}) · ${a.length} måling${a.length === 1 ? "" : "er"}</span></div>
       <div class="lt"><span class="tnum"><b>${nTall(s.verdi, 2)}</b> ${esc(s.enhet)}</span>${ut ? ` <span class="pill ${ut === "innenfor" ? "ok" : "warn"}">${ut} referanse</span>` : ""}${s.ref_lav != null || s.ref_hoy != null ? `<span class="muted" style="font-size:12px;display:block">referanse ${s.ref_lav ?? "–"} til ${s.ref_hoy ?? "–"}</span>` : ""}</div></div>`; };
-  return `<div class="stack"><div class="panel stack"><h2>Legg inn måling</h2>
+  return `<div class="stack">${longevityPanel()}${bioPanel()}${merkPanel()}<div class="panel stack"><h2>Legg inn måling</h2>
     <form id="labbform" class="stack"><div class="row"><input id="lb-navn" class="txt" style="flex:2;min-width:140px" placeholder="Navn, f.eks. Ferritin" list="lb-liste" required><datalist id="lb-liste">${navn.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
       <input id="lb-dag" class="txt" type="date" value="${osloDate()}" required><input id="lb-verdi" class="txt" type="number" step="any" placeholder="Verdi" style="flex:1;min-width:90px" required><input id="lb-enhet" class="txt" placeholder="Enhet" style="flex:1;min-width:80px" required></div>
       <div class="row"><input id="lb-lav" class="txt" type="number" step="any" placeholder="Referanse fra" style="flex:1"><input id="lb-hoy" class="txt" type="number" step="any" placeholder="Referanse til" style="flex:1"><button class="btn primary small" type="submit">Lagre</button></div></form>
@@ -1682,8 +1689,8 @@ function vMarkedMer(){
     <p class="muted" style="font-size:12px;margin:0">${esc(p.def || "")}</p></div>` : "";
   const ik = i ? (i.kjop || []).slice(0, 10) : [];
   const inn = i ? `<div class="panel stack"><h2>Innsidekjøp (Form 4)</h2>${ik.length ? `<div class="notes">${ik.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.ticker)}</b><span class="muted">${esc(x.innsider || "")}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}${x.aksjer ? " · " + nTall(x.aksjer, 0) + " aksjer" : ""}</div></div>`).join("")}</div>` : `<p class="muted" style="margin:0">Ingen kjøp i det åpne markedet siste 90 dager for amerikanske selskaper du følger.</p>`}<p class="muted" style="font-size:12px;margin:0">${esc(i.merknad || "")}</p></div>` : "";
-  if (!tiles.includes("tile") && !c && !h && !p && !i) return `<div class="panel"><p class="muted" style="margin:0">Dataene kommer med neste kjøring.</p></div>`;
-  return `<div class="stack">${tiles}${hend}${cot}${piv}${inn}</div>`;
+  if (!tiles.includes("tile") && !c && !h && !p && !i && !NY.sentiment && !NY.iv && !NY.kelly) return `<div class="panel"><p class="muted" style="margin:0">Dataene kommer med neste kjøring.</p></div>`;
+  return `<div class="stack">${tiles}${sentimentPanel()}${hend}${cot}${piv}${ivPanel()}${kellyPanel()}${inn}</div>`;
 }
 
 /* --- Handelsplan: aritmetikk på egne planer. Samme regler som tools/handelsplan.py --- */
@@ -1793,10 +1800,82 @@ async function nyKlikk(t){
 }
 async function nyInnsending(f){
   if (f.id === "sporform") { await sendSporsmal(); return true; }
+  if (f.id === "merkform") { await lagreMerking(); f.reset(); return true; }
   if (f.id === "labbform") { await lagreLabb(); f.reset(); return true; }
   if (f.id === "planform") { await lagrePlan(); return true; }
   if (f.id === "beslform") { await lagreBeslutning(); f.reset(); return true; }
   return false;
+}
+/* --- Sentiment, IV, Kelly, longevity, biologisk alder og merkinger. Tallene regnes i Actions og vises som de er --- */
+const prosent = (v, d = 0) => v == null ? "–" : nTall(v, d);
+function sentimentPanel(){
+  const s = NY.sentiment; if (!s) return "";
+  const x = s.serier || {}, t = (v, lab, sub) => `<div class="tile static"><span class="big tnum">${v}</span><span class="lab">${lab}${sub ? `<br><small>${sub}</small>` : ""}</span></div>`;
+  const p1 = o => o && o.persentil_1aar != null ? `persentil 1 år: ${prosent(o.persentil_1aar)}` : "";
+  const tiles = [x.vix && t(nTall(x.vix.verdi, 1), "VIX " + esc(kortDato(x.vix.dato)), p1(x.vix)),
+    x.vix_mot_vix3m && t(nTall(x.vix_mot_vix3m.verdi, 2), "VIX / VIX3M", x.vix_mot_vix3m.struktur === "invertert" ? "invertert (over 1)" : "contango (under 1)"),
+    x.vix9d_mot_vix && t(nTall(x.vix9d_mot_vix.verdi, 2), "VIX9D / VIX", ""),
+    x.hy_spread && t(nTall(x.hy_spread.verdi, 2) + "<small> pp</small>", "HY-spread " + esc(kortDato(x.hy_spread.dato)), p1(x.hy_spread)),
+    x.nfci && t(nTall(x.nfci.verdi, 2), "NFCI " + esc(kortDato(x.nfci.dato)), "over 0 er strammere enn snitt"),
+    x.t10y2y && t(nTall(x.t10y2y.verdi, 2) + "<small> pp</small>", "10 år minus 2 år " + esc(kortDato(x.t10y2y.dato)), "")].filter(Boolean);
+  return `<div class="panel stack"><div class="spread"><h2>Stemning og stress</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(s.date))}</span></div>
+    <div class="tiles">${tiles.join("")}</div>
+    <p class="muted" style="font-size:12px;margin:0">Fra Cboe og FRED. Put/call og Fear and Greed er ikke med fordi ingen fersk, åpen kilde virket. Beskrivelse av nivå, ikke signal.</p></div>`;
+}
+function ivPanel(){
+  const v = NY.iv; if (!v) return "";
+  const r = (v.rader || []).slice(0, 14);
+  return `<div class="panel stack"><div class="spread"><h2>Implisitt volatilitet</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(v.date))}</span></div>
+    ${r.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Ticker</th><th>IV, %</th><th>Utløp</th><th>Egen percentil</th></tr></thead><tbody>${r.map(x => `<tr><td><b>${esc(x.ticker)}</b></td><td class="tnum">${nTall(x.iv_pct, 1)}</td><td class="tnum">${esc(kortDato(x.utlop))} (${x.dager} d)</td><td class="tnum">${x.persentil_egen != null ? nTall(x.persentil_egen, 0) : `<span class="muted">${x.hist_dager} av 20 dager</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted" style="margin:0">Ingen av selskapene hadde brukbare opsjoner.</p>`}
+    <p class="muted" style="font-size:12px;margin:0">${esc(v.metode || "")}</p></div>`;
+}
+function kellyPanel(){
+  const k = NY.kelly; if (!k) return "";
+  const ki = k.ki90_kelly_pct;
+  return `<div class="panel stack"><div class="spread"><h2>Kelly på egen historikk</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(k.date))}</span></div>
+    ${k.kelly_pct == null ? `<p class="muted" style="margin:0">${esc(k.merknad_beregning || "Ikke nok data.")}</p>` : `<div class="tiles"><div class="tile static"><span class="big tnum">${nTall(k.kelly_pct, 1)}<small> %</small></span><span class="lab">full Kelly (risiko per handel)</span></div>
+      <div class="tile static"><span class="big tnum">${nTall(k.halv_kelly_pct, 1)}<small> %</small></span><span class="lab">halv Kelly</span></div>
+      <div class="tile static"><span class="big tnum">${nTall(k.regel_pct, 1)}<small> %</small></span><span class="lab">din regel, gjelder alltid</span></div></div>
+      <p class="muted" style="font-size:13px;margin:0">${k.handler} handler (${k.vinnere} vinnere, ${k.tapere} tapere), snitt ${nTall(k.snitt_r, 2)} R. 90 % intervall for full Kelly: ${nTall(ki[0], 1)} til ${nTall(ki[1], 1)} %.${k.for_fa ? " <b>For få handler</b> (under 30), tallet sier lite." : ""}</p>`}
+    <p class="muted" style="font-size:12px;margin:0">Beskrivelse. Det styrer ikke størrelsen på noen handel: 1,5 % per handel og 7,5 % samlet åpen risiko gjelder.</p></div>`;
+}
+function longevityPanel(){
+  const l = NY.longevity; if (!l) return "";
+  const ikon = o => o === true ? `<span class="pill ok">ja</span>` : o === false ? `<span class="pill warn">nei</span>` : `<span class="pill">for lite data</span>`;
+  return `<div class="panel stack"><div class="spread"><h2>Longevity-sjekkliste</h2><span class="muted tnum" style="font-size:12px">${l.bestatt} av ${l.av} oppfylt · siste ${l.vindu_dager} dager</span></div>
+    <div class="notes">${(l.kriterier || []).map(k => `<div class="lrow"><div class="lco"><b>${esc(k.navn)}</b><span class="muted">${k.terskel != null ? "terskel " + nTall(k.terskel, 0) + " " + esc(k.enhet) : ""}${k.merknad ? " · " + esc(k.merknad) : ""}</span></div><div class="lt"><span class="tnum">${k.verdi != null ? "<b>" + nTall(k.verdi, 1) + "</b> " + esc(k.enhet) : "–"}</span> ${ikon(k.oppfylt)}</div></div>`).join("")}
+    ${(l.referanse || []).map(k => `<div class="lrow"><div class="lco"><b>${esc(k.navn)}</b><span class="muted">${k.endring_90d != null ? "endring 90 d: " + (k.endring_90d > 0 ? "+" : "") + nTall(k.endring_90d, 1) : "ingen terskel"}</span></div><div class="lt tnum"><b>${nTall(k.verdi, 1)}</b></div></div>`).join("")}</div>
+    <p class="muted" style="font-size:12px;margin:0">${esc(l.merknad || "")}</p></div>`;
+}
+function bioPanel(){
+  const b = NY.bioalder;
+  return `<div class="panel stack"><h2>Biologisk alder (PhenoAge)</h2>${b ? `<div class="tiles"><div class="tile static"><span class="big tnum">${nTall(b.phenoage, 1)}</span><span class="lab">PhenoAge ${esc(kortDato(b.date))}</span></div><div class="tile static"><span class="big tnum">${nTall(b.alder, 1)}</span><span class="lab">kronologisk alder</span></div><div class="tile static"><span class="big tnum">${b.diff_aar > 0 ? "+" : ""}${nTall(b.diff_aar, 1)}</span><span class="lab">forskjell, år</span></div></div>
+    <p class="muted" style="font-size:12px;margin:0">Med den andre verdien av siste konstant i formelen ville svaret vært ${nTall(b.alt_0_09165, 1)}. ${esc(b.merknad || "")}</p>` : `<p class="muted" style="margin:0">Ingen komplett prøve ennå.</p>`}
+    <p class="muted" style="font-size:12px;margin:0">Legg inn ti målinger på samme dag under Legg inn måling: Alder (år), Albumin, Kreatinin, Glukose, CRP, Lymfocytter, MCV, RDW, ALP og Leukocytter, med enhet fra svaret (g/L, µmol/L, mmol/L, mg/L, %, fL, U/L, 10^9/L). Mangler noe, regnes ingenting.</p></div>`;
+}
+const MERK = {alkohol: "Alkohol", koffein: "Koffein", syk: "Syk", reise: "Reise", supplement: "Supplement"};
+function merkPanel(){
+  const a = NY.merkAnalyse, m = NY.merk.slice().sort((x, y) => String(y.dag).localeCompare(String(x.dag))).slice(0, 8);
+  const rader = a ? (a.resultater || []) : [];
+  const tbl = r => `<div class="eyebrow">${esc(r.navn)} · ${r.netter} netter${r.overlapp_andre_merkinger ? " · " + r.overlapp_andre_merkinger + " overlapper andre merkinger" : ""}</div>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Mål</th><th>Med</th><th>Uten</th><th>Forskjell</th><th>90 % intervall</th></tr></thead><tbody>${r.malinger.map(x => x.vises ? `<tr><td>${esc(x.navn)}</td><td class="tnum">${nTall(x.snitt_med, 1)} <span class="muted">(${x.n_med})</span></td><td class="tnum">${nTall(x.snitt_uten, 1)} <span class="muted">(${x.n_uten})</span></td><td class="tnum"><b>${x.diff > 0 ? "+" : ""}${nTall(x.diff, 1)}</b></td><td class="tnum">${x.ki90 ? nTall(x.ki90[0], 1) + " til " + nTall(x.ki90[1], 1) : `<span class="muted">fra 5 netter</span>`}</td></tr>` : `<tr><td>${esc(x.navn)}</td><td colspan="4" class="muted">for få netter (${x.n_med})</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="panel stack"><h2>Merkinger mot natta etter</h2>
+    <form id="merkform" class="stack"><div class="row"><input id="mk-dag" class="txt" type="date" value="${osloDate()}" required><select id="mk-type" class="txt">${Object.entries(MERK).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
+      <input id="mk-verdi" class="txt" type="number" step="any" min="0" placeholder="Enheter (alkohol)" style="flex:1;min-width:110px"><input id="mk-tid" class="txt" type="time" title="Siste kopp (koffein)" style="min-width:100px"></div>
+      <div class="row"><input id="mk-notat" class="txt" placeholder="Notat (valgfritt)" style="flex:1" maxlength="120"><button class="btn primary small" type="submit">Lagre</button></div></form>
+    <p class="muted" style="font-size:12px;margin:0">Datoen er kvelden det gjelder. Effekten leses av natta etter, slik Garmin daterer den. Koffein teller som sent fra kl 14:00. Hver merking lagres som egen oppføring.</p>
+    ${m.length ? `<div class="muted" style="font-size:13px">Siste: ${m.map(x => esc(kortDato(x.dag)) + " " + esc(MERK[x.type] || x.type) + (x.verdi != null ? " " + x.verdi : "") + (x.tid ? " kl " + esc(x.tid) : "")).join(" · ")}</div>` : ""}
+    ${rader.length ? rader.map(tbl).join("") : `<p class="muted" style="margin:0">Analysen kommer når det finnes merkinger.</p>`}
+    <p class="muted" style="font-size:12px;margin:0">${esc(a?.merknad || "Beskrivelse av egne data, ikke påvist årsak.")} Netter med syk-merking er holdt utenfor «uten».</p></div>`;
+}
+async function lagreMerking(){
+  const g = id => $("#" + id)?.value.trim(); const dag = g("mk-dag"), type = g("mk-type");
+  if (!dag || !type || !S.db) { toast("Velg dato og type"); return; }
+  const o = {dag, type, opprettet: new Date().toISOString(), date: dag};
+  if (type === "alkohol") { const v = g("mk-verdi"); if (v === "" || v == null || isNaN(Number(v))) { toast("Skriv antall enheter, 0 hvis ingen"); return; } o.verdi = Number(v); }
+  if (type === "koffein") { const t = g("mk-tid"); if (!/^\d{2}:\d{2}$/.test(t || "")) { toast("Velg klokkeslett for siste kopp"); return; } o.tid = t; }
+  if (g("mk-notat")) o.notat = g("mk-notat");
+  try { await S.db.doc("merkinger/" + dag + "-" + type + "-" + Date.now().toString(36).slice(-5)).set(o); toast("Merking lagret"); } catch (err) { toast(writeErr(err)); }
 }
 /*NYTT-END*/
 function vTools(){
