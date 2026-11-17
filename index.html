@@ -2467,8 +2467,10 @@ function vMakro(){
       </div><p class="muted" style="font-size:13px">${esc(siste.note || "")} Kilde: ${esc(siste.kilde || "Cameco")}. Dette er ikke live.</p>` :
       `<p class="muted">Ingen uranpriser ennå. Hentes månedlig fra Cameco.</p>`}</div>
     <div class="panel stack"><div class="spread"><h2>Makro</h2><span class="muted" style="font-size:13px">${m?.status === "ok" ? "hver verdi med egen dato" : ""}</span></div>
-      ${m?.status === "ok" ? `<div class="notes">${(m.serier || []).map(x => `<div class="lrow"><div class="lco"><b>${esc(x.navn)}</b><span class="muted">${esc(x.id)} · ${esc(x.as_of)}${x.takt ? " · " + esc(x.takt) : ""}</span></div>
-          <div class="lt"><span class="tnum">${x.verdi}</span>${x.endring !== null && x.endring !== undefined ? `<div class="muted tnum" style="font-size:13px">${sgn(x.endring)}</div>` : ""}</div></div>`).join("")}</div>
+      ${m?.status === "ok" ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Serie</th><th>Nå</th><th>1 mnd</th><th>3 mnd</th><th>12 mnd</th><th>Persentil 12 mnd</th></tr></thead><tbody>${(m.serier || []).map(x => { const t = x.trend || {}; const c = v => v == null ? `<td class="muted">–</td>` : `<td class="tnum ${tone(v)}">${dTall(v, "", 2)}</td>`;
+        return `<tr><td><b>${esc(x.navn)}</b><br><span class="muted" style="font-size:11px">${esc(x.id)} · ${esc(x.as_of || "")}${x.enhet ? " · " + esc(x.enhet) : ""}</span></td>
+          <td class="tnum"><b>${nTall(x.verdi, 2)}</b></td>${c(t.m1)}${c(t.m3)}${c(t.m12)}<td class="tnum">${t.persentil_12m != null ? nTall(t.persentil_12m, 0) : `<span class="muted">–</span>`}</td></tr>`; }).join("")}</tbody></table></div>
+        <p class="muted" style="font-size:12px;margin:0">Endringen er i seriens egen enhet, målt mot siste verdi på eller før 30, 91 og 365 dager tilbake. Persentilen sier hvor dagens verdi ligger i de siste 12 månedene.</p>
         ${(m.utelatt || []).length ? `<p class="muted" style="font-size:13px">Utelatt: ${(m.utelatt || []).map(x => esc(x.id) + " (" + esc(x.grunn) + ")").join(", ")}.</p>` : ""}
         <p class="muted" style="font-size:13px">${esc(m.attribusjon || "")}</p>` :
       `<p class="muted">${esc(m?.note || "Makrotallene er ikke satt opp ennå. De krever en gratis FRED-nøkkel i repoet.")}</p>`}</div>
