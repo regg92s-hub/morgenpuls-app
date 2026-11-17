@@ -1894,7 +1894,7 @@ function markedsbildeKropp(ma){
     <p style="margin:0"><b>${esc(b.setning || "")}</b></p>
     ${ma?.verdikt ? `<p class="muted" style="margin:0;font-size:13px">MarketAnalyzor: ${esc(ma.verdikt)}</p>` : ""}
     <div class="tblwrap"><table class="tbl"><thead><tr><th>Komponent</th><th>Verdi</th><th>Tilstand</th><th>Regel</th></tr></thead><tbody>${k.map(rad).join("")}</tbody></table></div>
-    ${mt.length ? `<div class="tiles">${mt.map(x => `<div class="tile static"><span class="big tnum">${nTall(x.verdi, 2)}${x.enhet === "%" ? "<small> %</small>" : ""}</span><span class="lab">${esc(x.navn)}<br><small>${esc(kortDato(x.dato))}${x.persentil_1aar != null ? " · persentil 1 år " + nTall(x.persentil_1aar, 0) : ""}</small></span></div>`).join("")}</div>` : ""}
+    ${mt.length ? `<div class="tiles">${mt.map(x => `<div class="tile static"><span class="big tnum">${nTall(x.verdi, 2)}${x.enhet === "%" ? "<small> %</small>" : ""}</span><span class="lab">${esc(x.navn)}<br><small>${esc(kortDato(x.dato))}${x.trend?.m3 != null ? " · 3 mnd " + dTall(x.trend.m3, "", 2) : ""}${x.trend?.persentil_12m != null ? " · persentil 12 mnd " + nTall(x.trend.persentil_12m, 0) : (x.persentil_1aar != null ? " · persentil 1 år " + nTall(x.persentil_1aar, 0) : "")}</small></span></div>`).join("")}</div>` : ""}
     <p class="muted" style="font-size:12px;margin:0">${esc(b.merknad || "")} ${esc(b.treg?.note || "")}</p>`;
 }
 /* --- Posisjonskonteksten: det som bare gjelder det jeg eier og følger --- */
