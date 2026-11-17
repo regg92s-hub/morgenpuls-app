@@ -847,7 +847,12 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 (() => {
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* Gammel historikk ble skrevet med aa, oe og ae i stedet for å, ø og æ. Filene er historikk og
+   skrives aldri om, så teksten rettes her ved visning. Ordbok, ikke mønster: bare hele ord som
+   står i listen byttes, slik at egennavn som Bioextrax, Boeing og Cboe står urørt. */
+const NB_ORD = {aa:"å",aapen:"åpen",aapenbart:"åpenbart",aapent:"åpent",aapne:"åpne",aapner:"åpner",aar:"år",aarene:"årene",aarlig:"årlig",aarsak:"årsak",aarsaken:"årsaken",anslaa:"anslå",anslaatt:"anslått",avstaand:"avstand",baade:"både",baere:"bære",baerer:"bærer",beloep:"beløp",beroert:"berørt",blaa:"blå",boelge:"bølge",boer:"bør",boers:"børs",boersen:"børsen",boersmeldinger:"børsmeldinger",daarlig:"dårlig",daarligere:"dårligere",doed:"død",doegn:"døgn",doegnene:"døgnene",doegnet:"døgnet",faa:"få",faar:"får",foede:"føde",foeles:"føles",foelge:"følge",foelgende:"følgende",foelger:"følger",foelsom:"følsom",foer:"før",foerst:"først",foerste:"første",foert:"ført",forsoek:"forsøk",forsoeker:"forsøker",forsoeket:"forsøket",forstaa:"forstå",forstaar:"forstår",froe:"frø",gaar:"går",gaatt:"gått",gjennomfoert:"gjennomført",gjennomsnittsmaal:"gjennomsnittsmål",gjoer:"gjør",gjoere:"gjøre",graa:"grå",groenn:"grønn",haandheves:"håndheves",haandterer:"håndterer",hoere:"høre",hoey:"høy",hoeyde:"høyde",hoeye:"høye",hoeyere:"høyere",hoeyest:"høyest",hoeyeste:"høyeste",hoeyre:"høyre",innfoert:"innført",innsidekjoep:"innsidekjøp",kjoep:"kjøp",kjoeper:"kjøper",kjoepet:"kjøpet",kjoepsraad:"kjøpsråd",kjoepsside:"kjøpsside",kjoepssignal:"kjøpssignal",kjoering:"kjøring",kjoeringen:"kjøringen",kjoeringene:"kjøringene",kjoeringer:"kjøringer",laere:"lære",laering:"læring",loenn:"lønn",loep:"løp",loeping:"løping",loesning:"løsning",loesningen:"løsningen",loest:"løst",loev:"løv",maa:"må",maal:"mål",maalene:"målene",maaler:"måler",maaleren:"måleren",maalet:"målet",maaling:"måling",maalinger:"målinger",maalmappen:"målmappen",maalt:"målt",maaned:"måned",maaneden:"måneden",maaneder:"måneder",maanedlig:"månedlig",maanedlige:"månedlige",maaneds:"måneds",maanedsrad:"månedsrad",maanedsradene:"månedsradene",maanedsslutt:"månedsslutt",maate:"måte",maaten:"måten",morgenkjoering:"morgenkjøring",naa:"nå",naadd:"nådd",naar:"når",naer:"nær",naerheten:"nærheten",naerme:"nærme",naermere:"nærmere",naermest:"nærmest",nivaa:"nivå",nivaaer:"nivåer",nivaaet:"nivået",noekkel:"nøkkel",noekkelen:"nøkkelen",noekler:"nøkler",oeke:"øke",oeker:"øker",oekning:"økning",oekonomi:"økonomi",oekonomisk:"økonomisk",oekt:"økt",oekter:"økter",oenske:"ønske",oensker:"ønsker",oensket:"ønsket",oevelse:"øvelse",oevelser:"øvelser",oeverste:"øverste",oevre:"øvre",oeye:"øye",oppfoelging:"oppfølging",oppfoelgingen:"oppfølgingen",paa:"på",paalitelig:"pålitelig",paaslag:"påslag",paavirker:"påvirker",paavirkning:"påvirkning",paavist:"påvist",raa:"rå",raad:"råd",raaolje:"råolje",roed:"rød",roere:"røre",roeres:"røres",roert:"rørt",roeyk:"røyk",saa:"så",saann:"sånn",smaa:"små",soek:"søk",soeke:"søke",soeker:"søker",soelv:"sølv",soenn:"sønn",soevn:"søvn",soevnen:"søvnen",soevnlengde:"søvnlengde",soevnregularitet:"søvnregularitet",soevnscore:"søvnscore",soevnvinduer:"søvnvinduer",spoer:"spør",spoersmaal:"spørsmål",sporsmaal:"spørsmål",staa:"stå",staar:"står",stoerre:"større",stoerrelse:"størrelse",stoerst:"størst",stoette:"støtte",stoetter:"støtter",stoettet:"støttet",stoey:"støy",stressmaal:"stressmål",svaert:"svært",taale:"tåle",taaler:"tåler",tilfoert:"tilført",tilstaand:"tilstand",toem:"tøm",traad:"tråd",traadt:"trådt",tradingkjoering:"tradingkjøring",tradingkjoeringen:"tradingkjøringen",troett:"trøtt",ukjoerte:"ukjørte",uroert:"urørt",utfoert:"utført",utloep:"utløp",utloeper:"utløper",utloeser:"utløser",utloeses:"utløses",vaaken:"våken",vaakner:"våkner",vaar:"vår",vaer:"vær",vaere:"være",vaert:"vært"};
+const nbOrd = s => s.replace(/[A-Za-zÆØÅæøå]+/g, w => { const n = NB_ORD[w.toLowerCase()]; if (!n) return w; if (w === w.toUpperCase() && w !== w.toLowerCase()) return n.toUpperCase(); return w[0] === w[0].toUpperCase() ? n[0].toUpperCase() + n.slice(1) : n; });
+const esc = s => nbOrd(String(s ?? "")).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const safeUrl = u => { try { const x = new URL(u); return (x.protocol === "https:" || x.protocol === "http:") ? x.href : ""; } catch { return ""; } };
 const osloDate = (d = new Date()) => new Intl.DateTimeFormat("sv-SE", {timeZone: "Europe/Oslo"}).format(d);
 const dayNum = (s = osloDate()) => { const [y,m,d] = s.split("-").map(Number); return Math.round(Date.UTC(y, m-1, d) / 864e5); };
@@ -880,9 +885,9 @@ const feed = () => S.feeds[S.feedIdx] || null;
 /* ---------- navigasjon ---------- */
 const VIEWS = ["idag","helse","finans","marked","nyheter","verktoy","laering","rapport","notater","sok"];
 // Gamle navn (lenker, varsler, lagret fane) peker til sin plass i de nye fanene.
-const ALIAS = {trading: ["verktoy", "trading"], kokk: ["verktoy", "kokk"], gitar: ["verktoy", "gitar"], uke: ["rapport", "uke"], beslutning: ["verktoy", "beslutning"]};
+const ALIAS = {trading: ["finans", "pos"], kokk: ["verktoy", "kokk"], gitar: ["verktoy", "gitar"], uke: ["rapport", "uke"], beslutning: ["verktoy", "beslutning"]};
 const inV = n => S.view === n || (ALIAS[n] && S.view === ALIAS[n][0]);
-function go(v){ if (ALIAS[v]) { const [vw, sub] = ALIAS[v]; if (vw === "verktoy") S.vkSub = sub; if (vw === "rapport") S.rapSub = sub; v = vw; }
+function go(v){ if (ALIAS[v]) { const [vw, sub] = ALIAS[v]; if (vw === "verktoy") S.vkSub = sub; if (vw === "rapport") S.rapSub = sub; if (vw === "finans") { S.finSub = sub; store.set("mp.fsub", sub); } v = vw; }
   if (!VIEWS.includes(v)) v = "idag"; S.view = v; try { history.replaceState(null, "", "#" + v); } catch {} store.set("mp.view", v);
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === v)));
   if (v === "laering" && S.learnSub === "geo") loadMaps(); render(); window.scrollTo({top:0}); }
@@ -1231,10 +1236,9 @@ function mSpark(sp){
   return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="${sp[sp.length - 1] >= sp[0] ? "var(--ok)" : "var(--accent)"}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
 }
 function vMarked(){
-  const sub = S.mSub === "roadmap" || S.mSub === "screener" || S.mSub === "makro" || S.mSub === "mer" ? S.mSub : "status";
-  const tabs = `<div class="subtabs">${[["status","Status"],["roadmap","Roadmaps"],["screener","Aksjer"],["makro","Makro og uran"],["mer","Kontekst"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
+  const sub = S.mSub === "roadmap" || S.mSub === "screener" || S.mSub === "makro" ? S.mSub : S.mSub === "mer" ? "makro" : "status";
+  const tabs = `<div class="subtabs">${[["status","Nå"],["roadmap","Roadmaps"],["screener","Aksjer"],["makro","Makro og kontekst"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-msub="${k}">${l}</button>`).join("")}</div>`;
   if (sub === "makro") return `<div class="stack">${tabs}${vMakro()}</div>`;
-  if (sub === "mer") return `<div class="stack">${tabs}${vMarkedMer()}</div>`;
   if (sub === "screener") return `<div class="stack">${tabs}${vScreener()}</div>`;
   const d = S.ma;
   if (!d || d.status !== "ok") return `<div class="stack">${tabs}<div class="panel stack"><h2>Marked</h2>
@@ -1304,13 +1308,8 @@ function vMStatus(d){
   const sek = ["Ro", "Korreksjon", "Kapitulasjon", "Stabilisering", "Bekreftelse"];
   return `
   <div class="panel stack">
-    <div class="spread"><h2>Status</h2><span class="muted tnum" style="font-size:13px">${esc(d.kilde_dato || d.date)}</span></div>
-    <p>${esc(d.verdikt || "")}</p>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
-      <span class="mac ${/risk-off|defensiv/i.test(d.makro?.regime || "") ? "r" : /risk-on|offensiv/i.test(d.makro?.regime || "") ? "g" : "y"}">${esc(d.makro?.regime || "Regime ukjent")}</span>
-      ${flyt.tilstand ? `<span class="mac ${/off/i.test(flyt.tilstand) ? "r" : /on/i.test(flyt.tilstand) ? "g" : "y"}">Pengestrøm: ${esc(flyt.tilstand)}</span>` : ""}
-      ${d.bredde?.global_tilstand ? `<span class="mac n">${esc(d.bredde.global_tilstand)}</span>` : ""}
-    </div>
+    <div class="spread"><h2>Markedet nå</h2><span class="muted tnum" style="font-size:13px">${esc(d.kilde_dato || d.date)}</span></div>
+    ${markedsbildeKropp(d)}
   </div>
   <div class="panel stack">
     <div class="spread"><h2>Utvikling</h2><span class="muted" style="font-size:12px">endring mot</span></div>
@@ -1546,7 +1545,7 @@ function scRad(x){
    Alt her viser tall som koden har regnet ut i kjøringen. Appen regner ikke om noe,
    med ett unntak: planBeregn, som har samme aritmetikk som tools/handelsplan.py og
    krysstestes mot den (tools/tester/test_plan_krysstest.cjs). Ingenting her er råd. */
-const NY = {friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null, sentiment: null, iv: null, kelly: null, longevity: null, bioalder: null, merk: [], merkAnalyse: null,
+const NY = {friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null, markedsbilde: null, sentiment: null, iv: null, kelly: null, longevity: null, bioalder: null, merk: [], merkAnalyse: null,
   plan: null, planer: [], labb: [], beslutning: [], sporsmal: [], varsel: [], vo2: [], soner: [], akt: [], sig: null, planNy: false, ventSvar: null};
 const nTall = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("nb-NO", {maximumFractionDigits: d, minimumFractionDigits: 0});
 const kortDato = s => s ? String(s).slice(8, 10) + "." + String(s).slice(5, 7) + "." : "–";
@@ -1561,12 +1560,13 @@ function nyAbonner(db){
   on("cot", a => { NY.cot = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
   on("norsk", a => { NY.norsk = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
   on("strom", a => { NY.strom = senest(a, 2); }, () => S.view === "marked" && S.mSub === "mer");
-  on("hendelser", a => { NY.hendelser = senest(a.filter(x => (x.hendelser || []).length || !(x.feil || []).length))[0] || null; }, () => (S.view === "marked" && S.mSub === "mer") || S.view === "idag");
-  on("pivot", a => { NY.pivot = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
-  on("innsider", a => { NY.innsider = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
-  on("sentiment", a => { NY.sentiment = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
-  on("iv", a => { NY.iv = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
-  on("kelly", a => { NY.kelly = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "mer");
+  on("hendelser", a => { NY.hendelser = senest(a.filter(x => (x.hendelser || []).length || !(x.feil || []).length))[0] || null; }, () => (S.view === "marked" && S.mSub === "makro") || (S.view === "finans" && S.finSub === "pos") || S.view === "idag");
+  on("pivot", a => { NY.pivot = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
+  on("innsider", a => { NY.innsider = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
+  on("sentiment", a => { NY.sentiment = senest(a)[0] || null; }, () => S.view === "marked");
+  on("markedsbilde", a => { NY.markedsbilde = senest(a)[0] || null; }, () => S.view === "marked");
+  on("iv", a => { NY.iv = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
+  on("kelly", a => { NY.kelly = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("longevity", a => { NY.longevity = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
   on("biologisk_alder", a => { NY.bioalder = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
   on("merkinger", a => { NY.merk = a; }, () => S.view === "helse" && S.hSub === "labb");
@@ -1671,8 +1671,8 @@ async function lagreLabb(){
 }
 
 /* --- Marked: kontekst (COT, norske tall, hendelser, pivot, innsidekjøp) --- */
-function vMarkedMer(){
-  const c = NY.cot, n = NY.norsk, s = NY.strom[0], h = NY.hendelser, p = NY.pivot, i = NY.innsider;
+function markedKontekst(){
+  const c = NY.cot, n = NY.norsk, s = NY.strom[0], h = NY.hendelser, p = null, i = null;
   const tile = (stor, lab) => `<div class="tile static"><span class="big tnum">${stor}</span><span class="lab">${lab}</span></div>`;
   const tiles = `<div class="tiles">${s ? tile(nTall(s.snitt, 2) + "<small> kr/kWh</small>", "strøm NO2 snitt " + esc(kortDato(s.date)) + " (laveste " + nTall(s.lav?.p, 2) + " kl " + esc(s.lav?.t || "") + ")") : ""}
     ${n?.styringsrente ? tile(nTall(n.styringsrente.rente, 2) + "<small> %</small>", "styringsrente " + esc(kortDato(n.styringsrente.dato))) : ""}
@@ -1681,16 +1681,16 @@ function vMarkedMer(){
   const cot = c ? `<div class="panel stack"><div class="spread"><h2>Posisjonering (CFTC COT)</h2><span class="muted tnum" style="font-size:12px">per tirsdag ${esc(kortDato(c.date))}</span></div>
     <div class="tblwrap"><table class="tbl"><thead><tr><th>Marked</th><th>Netto, % av OI</th><th>Percentil 3 år</th><th>Endring uke</th></tr></thead><tbody>${(c.markeder || []).map(m => `<tr><td>${esc(m.navn)} <span class="muted" style="font-size:11px">${esc(m.gruppe)}</span></td><td class="tnum">${nTall(m.netto_pct, 1)}</td><td class="tnum ${m.pct_3aar != null && (m.pct_3aar >= 90 || m.pct_3aar <= 10) ? "warn" : ""}">${nTall(m.pct_3aar, 0)}</td><td class="tnum">${dTall(m.endring_uke)}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:12px;margin:0">Spekulantenes netto posisjon i terminmarkedet, publisert fredag for tirsdag. Ytterkantene (over 90 eller under 10) er markert. Beskrivelse, ikke signal.</p></div>` : "";
-  const hs = h ? (h.hendelser || []).filter(x => x.dato >= osloDate()).slice(0, 14) : [];
-  const hend = `<div class="panel stack"><h2>Hendelser fremover</h2>${hs.length ? `<div class="notes">${hs.map(x => { const dg = daysSince(x.dato) * -1; return `<div class="lrow"><div class="lco"><b>${esc(x.tittel)}</b><span class="muted">${esc(x.art)}${x.ticker ? " · " + esc(x.ticker) : ""}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}<span class="muted" style="display:block;font-size:12px">${dg === 0 ? "i dag" : "om " + dg + " d"}</span></div></div>`; }).join("")}</div>` : `<p class="muted" style="margin:0">Ingen kommende hendelser registrert.</p>`}${(h?.feil || []).length ? `<p class="muted" style="font-size:12px;margin:0">${h.feil.length} henting(er) feilet i siste kjøring.</p>` : ""}</div>`;
-  const pr = p ? (p.rader || []).slice(0, 12) : [];
+  const hs = h ? (h.hendelser || []).filter(x => x.dato >= osloDate() && x.art !== "resultat").slice(0, 14) : [];
+  const hend = `<div class="panel stack"><h2>Rentemøter og makrohendelser</h2>${hs.length ? `<div class="notes">${hs.map(x => { const dg = daysSince(x.dato) * -1; return `<div class="lrow"><div class="lco"><b>${esc(x.tittel)}</b><span class="muted">${esc(x.art)}${x.ticker ? " · " + esc(x.ticker) : ""}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}<span class="muted" style="display:block;font-size:12px">${dg === 0 ? "i dag" : "om " + dg + " d"}</span></div></div>`; }).join("")}</div>` : `<p class="muted" style="margin:0">Ingen kommende hendelser registrert.</p>`}${(h?.feil || []).length ? `<p class="muted" style="font-size:12px;margin:0">${h.feil.length} henting(er) feilet i siste kjøring.</p>` : ""}</div>`;
+  const pr = [];
   const piv = p ? `<div class="panel stack"><div class="spread"><h2>Avstand til pivot</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(p.date))}</span></div>
     ${pr.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Ticker</th><th>Avstand, ATR</th><th>Status</th><th>Volum mot 50 d</th></tr></thead><tbody>${pr.map(r => `<tr><td><b>${esc(r.ticker)}</b></td><td class="tnum">${nTall(r.avstand_atr, 2)}</td><td>${esc(r.status)}</td><td class="tnum">${r.volum_rel != null ? nTall(r.volum_rel, 2) + "×" : "–"}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted" style="margin:0">Ingen rader med data.</p>`}
     <p class="muted" style="font-size:12px;margin:0">${esc(p.def || "")}</p></div>` : "";
   const ik = i ? (i.kjop || []).slice(0, 10) : [];
   const inn = i ? `<div class="panel stack"><h2>Innsidekjøp (Form 4)</h2>${ik.length ? `<div class="notes">${ik.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.ticker)}</b><span class="muted">${esc(x.innsider || "")}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}${x.aksjer ? " · " + nTall(x.aksjer, 0) + " aksjer" : ""}</div></div>`).join("")}</div>` : `<p class="muted" style="margin:0">Ingen kjøp i det åpne markedet siste 90 dager for amerikanske selskaper du følger.</p>`}<p class="muted" style="font-size:12px;margin:0">${esc(i.merknad || "")}</p></div>` : "";
-  if (!tiles.includes("tile") && !c && !h && !p && !i && !NY.sentiment && !NY.iv && !NY.kelly) return `<div class="panel"><p class="muted" style="margin:0">Dataene kommer med neste kjøring.</p></div>`;
-  return `<div class="stack">${tiles}${sentimentPanel()}${hend}${cot}${piv}${ivPanel()}${kellyPanel()}${inn}</div>`;
+  if (!tiles.includes("tile") && !c && !h && !NY.sentiment) return `<div class="panel"><p class="muted" style="margin:0">Dataene kommer med neste kjøring.</p></div>`;
+  return `<div class="stack">${tiles}${sentimentPanel()}${hend}${cot}</div>`;
 }
 
 /* --- Handelsplan: aritmetikk på egne planer. Samme regler som tools/handelsplan.py --- */
@@ -1774,10 +1774,10 @@ async function lagreBeslutning(){
 /* --- Kommandopalett (Ctrl/Cmd + K) --- */
 const PALETT = [
   ["Idag", () => go("idag")], ["Helse: form", () => { S.hSub = "form"; store.set("mp.hsub", "form"); go("helse"); }], ["Helse: labb", () => { S.hSub = "labb"; store.set("mp.hsub", "labb"); go("helse"); }],
-  ["Marked: kontekst (COT, hendelser, pivot)", () => { S.mSub = "mer"; store.set("mp.msub", "mer"); go("marked"); }], ["Marked: roadmaps", () => { S.mSub = "roadmap"; store.set("mp.msub", "roadmap"); go("marked"); }],
-  ["Trading og handelsplan", () => { S.vkSub = "trading"; store.set("mp.vksub", "trading"); go("verktoy"); }], ["Beslutningslogg", () => { S.vkSub = "beslutning"; store.set("mp.vksub", "beslutning"); go("verktoy"); }],
+  ["Marked: makro og kontekst", () => { S.mSub = "makro"; store.set("mp.msub", "makro"); go("marked"); }], ["Marked: roadmaps", () => { S.mSub = "roadmap"; store.set("mp.msub", "roadmap"); go("marked"); }],
+  ["Posisjoner og handelsplan", () => go("trading")], ["Beslutningslogg", () => { S.vkSub = "beslutning"; store.set("mp.vksub", "beslutning"); go("verktoy"); }],
   ["Hurtigfangst (ny innboks-oppføring)", () => { go("notater"); N.open = null; N.importing = false; N.capturing = true; render(); }],
-  ["Spør dataene dine", () => { go("idag"); setTimeout(() => $("#sporin")?.focus(), 80); }], ["Rapport", () => go("rapport")], ["Læring", () => go("laering")], ["Nyheter", () => go("nyheter")], ["Finans", () => go("finans")], ["Søk", () => go("sok")]];
+  ["Spør dataene dine", () => { go("idag"); setTimeout(() => $("#sporin")?.focus(), 80); }], ["Rapport", () => go("rapport")], ["Læring", () => go("laering")], ["Nyheter", () => go("nyheter")], ["Mine posisjoner", () => go("finans")], ["Søk", () => go("sok")]];
 function palettApne(){
   if ($("#palett")) { $("#palett").remove(); return; }
   const d = document.createElement("div"); d.id = "palett"; d.className = "modal";
@@ -1877,11 +1877,50 @@ async function lagreMerking(){
   if (g("mk-notat")) o.notat = g("mk-notat");
   try { await S.db.doc("merkinger/" + dag + "-" + type + "-" + Date.now().toString(36).slice(-5)).set(o); toast("Merking lagret"); } catch (err) { toast(writeErr(err)); }
 }
+/* --- Markedsbildet: to horisonter holdt fra hverandre, regnet i tools/markedsbilde.py --- */
+const TILST = {"risk-on": ["g", "risk-on"], "risk-off": ["r", "risk-off"], "nøytral": ["y", "nøytral"], "blandet": ["y", "blandet"]};
+const tChip = (t, pre = "") => { const x = TILST[t]; return x ? `<span class="mac ${x[0]}">${pre}${x[1]}</span>` : `<span class="mac n">${pre}ukjent</span>`; };
+function markedsbildeKropp(ma){
+  const b = NY.markedsbilde;
+  if (!b) return `<p>${esc(ma?.verdikt || "")}</p><p class="muted" style="font-size:12px;margin:0">Det samlede markedsbildet regnes i morgenkjøringen og kommer med neste kjøring.</p>`;
+  const k = b.naa?.komponenter || [];
+  const rad = x => `<tr><td>${esc(x.navn)}</td><td class="tnum">${x.verdi != null ? nTall(x.verdi, x.id === "vix_term" ? 2 : 0) + (x.enhet === "%" ? " %" : "") : esc(x.tekst || "–")}</td>
+    <td>${tChip(x.tilstand)}</td><td class="muted" style="font-size:12px">${esc(x.regel || "")}</td></tr>`;
+  const mt = (b.makrotall || []).filter(x => ["T10Y2Y", "DTWEXBGS", "hy_spread", "nfci", "vix"].includes(x.id));
+  return `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+      ${tChip(b.treg?.tilstand, "Makro 6 til 18 mnd: ")}${b.treg?.score != null ? `<span class="muted tnum" style="font-size:12px">score ${b.treg.score}/100</span>` : ""}
+      ${tChip(b.naa?.tilstand, "Prisene nå 1 til 3 mnd: ")}<span class="muted tnum" style="font-size:12px">${b.naa?.risk_off ?? 0} av ${b.naa?.av ?? 0} komponenter risk-off</span>
+      ${b.motstrid ? `<span class="mac y">motstrid</span>` : ""}</div>
+    <p style="margin:0"><b>${esc(b.setning || "")}</b></p>
+    ${ma?.verdikt ? `<p class="muted" style="margin:0;font-size:13px">MarketAnalyzor: ${esc(ma.verdikt)}</p>` : ""}
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Komponent</th><th>Verdi</th><th>Tilstand</th><th>Regel</th></tr></thead><tbody>${k.map(rad).join("")}</tbody></table></div>
+    ${mt.length ? `<div class="tiles">${mt.map(x => `<div class="tile static"><span class="big tnum">${nTall(x.verdi, 2)}${x.enhet === "%" ? "<small> %</small>" : ""}</span><span class="lab">${esc(x.navn)}<br><small>${esc(kortDato(x.dato))}${x.persentil_1aar != null ? " · persentil 1 år " + nTall(x.persentil_1aar, 0) : ""}</small></span></div>`).join("")}</div>` : ""}
+    <p class="muted" style="font-size:12px;margin:0">${esc(b.merknad || "")} ${esc(b.treg?.note || "")}</p>`;
+}
+/* --- Posisjonskonteksten: det som bare gjelder det jeg eier og følger --- */
+function posKontekst(){
+  const p = NY.pivot, i = NY.innsider, h = NY.hendelser;
+  const egne = new Set([...(S.trading?.positions || []).map(x => x.symbol), ...((S.config?.companies || []).map(x => x.ticker))].filter(Boolean));
+  const res = h ? (h.hendelser || []).filter(x => x.dato >= osloDate() && x.art === "resultat").slice(0, 12) : [];
+  const pr = p ? (p.rader || []) : [];
+  const mine = pr.filter(x => egne.has(x.ticker));
+  const vis = (mine.length ? mine : pr).slice(0, 12);
+  const piv = p ? `<div class="panel stack"><div class="spread"><h2>Avstand til pivot</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(p.date))}</span></div>
+    ${vis.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Ticker</th><th>Avstand, ATR</th><th>Status</th><th>Volum mot 50 d</th></tr></thead><tbody>${vis.map(r => `<tr><td><b>${esc(r.ticker)}</b></td><td class="tnum">${nTall(r.avstand_atr, 2)}</td><td>${r.status === "ved" ? `<span class="pill ok">ved</span>` : `<span class="pill">${esc(r.status || "–")}</span>`}</td><td class="tnum">${nTall(r.volum_rel, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted" style="margin:0">Ingen pivotrader ennå.</p>`}
+    <p class="muted" style="font-size:12px;margin:0">${esc(p.def || "")}</p></div>` : "";
+  const ik = i ? (i.kjop || []).slice(0, 10) : [];
+  const inn = i && ik.length ? `<div class="panel stack"><h2>Innsidekjøp (Form 4)</h2><div class="notes">${ik.map(x => `<div class="lrow"><div class="lco"><b>${esc(x.ticker)}</b><span class="muted">${esc(x.innsider || "")}${x.rolle ? " · " + esc(x.rolle) : ""}</span></div><div class="lt tnum">${nTall(x.belop_usd, 0)} <span class="muted">USD · ${esc(kortDato(x.dato))}</span></div></div>`).join("")}</div>
+    <p class="muted" style="font-size:12px;margin:0">Kjøp meldt på Form 4 hos SEC. Beskrivelse, ikke signal.</p></div>` : "";
+  const hend = res.length ? `<div class="panel stack"><h2>Resultater fremover</h2><div class="notes">${res.map(x => { const dg = daysSince(x.dato) * -1; return `<div class="lrow"><div class="lco"><b>${esc(x.ticker || x.tittel)}</b><span class="muted">${esc(x.tittel)}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}${dg >= 0 ? ` <span class="muted">om ${dg} d</span>` : ""}</div></div>`; }).join("")}</div>
+    <p class="muted" style="font-size:12px;margin:0">Datoene er annonserte eller anslåtte, hentet fra Yahoo og SEC.</p></div>` : "";
+  if (!piv && !inn && !hend && !NY.iv && !NY.kelly) return "";
+  return `<div class="stack">${piv}${ivPanel()}${kellyPanel()}${inn}${hend}</div>`;
+}
 /*NYTT-END*/
 function vTools(){
-  const sub = ["trading","kokk","gitar","beslutning"].includes(S.vkSub) ? S.vkSub : "trading";
-  const tabs = `<div class="subtabs">${[["trading","Trading"],["kokk","Kokk"],["gitar","Gitar"],["beslutning","Beslutninger"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-vksub="${k}">${l}</button>`).join("")}</div>`;
-  const body = sub === "kokk" ? vKitchen() : sub === "gitar" ? vGuitar() : sub === "beslutning" ? vBeslutning() : vTrading();
+  const sub = ["kokk","gitar","beslutning"].includes(S.vkSub) ? S.vkSub : "kokk";
+  const tabs = `<div class="subtabs">${[["kokk","Kokk"],["gitar","Gitar"],["beslutning","Beslutninger"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-vksub="${k}">${l}</button>`).join("")}</div>`;
+  const body = sub === "gitar" ? vGuitar() : sub === "beslutning" ? vBeslutning() : vKitchen();
   return `<div class="stack">${tabs}${body}</div>`;
 }
 
@@ -2325,9 +2364,10 @@ function newsCard(n){
   </article>`;
 }
 function vFinance(){
-  const sub = S.finSub || "news";
-  const tabs = `<div class="subtabs">${[["news","Meldinger"],["ma36","36MA-status"],["short","Short"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-fsub="${k}">${l}</button>`).join("")}</div>`;
-  return `<div class="stack">${tabs}${sub === "ma36" ? vMa36() : sub === "short" ? vShort() : `<div class="stack">${vFinNews()}${vNasdaq()}</div>`}</div>`;
+  const sub = S.finSub === "trading" ? "pos" : (S.finSub || "pos");
+  const tabs = `<div class="subtabs">${[["pos","Posisjoner"],["news","Meldinger"],["ma36","36MA-status"],["short","Short"]].map(([k,l]) => `<button class="btn small ${sub===k?"primary":""}" data-fsub="${k}">${l}</button>`).join("")}</div>`;
+  const body = sub === "ma36" ? vMa36() : sub === "short" ? vShort() : sub === "news" ? `<div class="stack">${vFinNews()}${vNasdaq()}</div>` : `<div class="stack">${vTrading()}${posKontekst()}</div>`;
+  return `<div class="stack">${tabs}${body}</div>`;
 }
 function vFinNews(){
   const fi = feed()?.finance;
@@ -2431,7 +2471,8 @@ function vMakro(){
           <div class="lt"><span class="tnum">${x.verdi}</span>${x.endring !== null && x.endring !== undefined ? `<div class="muted tnum" style="font-size:13px">${sgn(x.endring)}</div>` : ""}</div></div>`).join("")}</div>
         ${(m.utelatt || []).length ? `<p class="muted" style="font-size:13px">Utelatt: ${(m.utelatt || []).map(x => esc(x.id) + " (" + esc(x.grunn) + ")").join(", ")}.</p>` : ""}
         <p class="muted" style="font-size:13px">${esc(m.attribusjon || "")}</p>` :
-      `<p class="muted">${esc(m?.note || "Makrotallene er ikke satt opp ennå. De krever en gratis FRED-nøkkel i repoet.")}</p>`}</div></div>`;
+      `<p class="muted">${esc(m?.note || "Makrotallene er ikke satt opp ennå. De krever en gratis FRED-nøkkel i repoet.")}</p>`}</div>
+    ${markedKontekst()}</div>`;
 }
 function vMa36(){
   const doc = S.ma36;
@@ -4203,7 +4244,7 @@ function loadLearnDoc(path, key, def){
     .catch(() => { if (key === "G") S.G = def(); else S.L[key] = def(); S.Lloaded[key] = true; render(); });
 }
 async function boot(){
-  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "news"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; S.akTab = store.get("mp.aktab") || "minervini"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
+  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "pos"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; S.akTab = store.get("mp.aktab") || "minervini"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
   go(VIEWS.includes(h) ? h : (store.get("mp.view") || "idag"));
   loadGeo(); loadHist();
   const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
