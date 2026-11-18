@@ -190,6 +190,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .jhist i{display:block;width:8px;background:var(--accent);border-radius:2px 2px 0 0;opacity:.85}
 .pos{color:var(--ok)} .neg{color:var(--accent)}
 .tile.static{cursor:default}.tile.static:hover{border-color:var(--line)}
+.market-pulse{width:100%;text-align:left;cursor:pointer;border:1px solid var(--line)}.market-pulse:hover{border-color:var(--muted)}
 .tile .big small{font-size:16px;font-weight:700}
 .notice{border:1px solid var(--warn);background:var(--warn-soft);color:var(--fg);border-radius:12px;padding:10px 14px;font-size:14px}
 .posrow{display:grid;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}
@@ -1564,7 +1565,7 @@ function nyAbonner(db){
   on("pivot", a => { NY.pivot = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("innsider", a => { NY.innsider = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("sentiment", a => { NY.sentiment = senest(a)[0] || null; }, () => S.view === "marked");
-  on("markedsbilde", a => { NY.markedsbilde = senest(a)[0] || null; }, () => S.view === "marked");
+  on("markedsbilde", a => { NY.markedsbilde = senest(a)[0] || null; }, () => S.view === "marked" || S.view === "idag");
   on("iv", a => { NY.iv = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("kelly", a => { NY.kelly = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("longevity", a => { NY.longevity = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
@@ -1880,21 +1881,29 @@ async function lagreMerking(){
 /* --- Markedsbildet: to horisonter holdt fra hverandre, regnet i tools/markedsbilde.py --- */
 const TILST = {"risk-on": ["g", "risk-on"], "risk-off": ["r", "risk-off"], "nøytral": ["y", "nøytral"], "blandet": ["y", "blandet"]};
 const tChip = (t, pre = "") => { const x = TILST[t]; return x ? `<span class="mac ${x[0]}">${pre}${x[1]}</span>` : `<span class="mac n">${pre}ukjent</span>`; };
+/* Felles for Marked og I dag: chip-raden med de to horisontene, og flisene med makrotall. */
+function mbChips(b){
+  return `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+      ${tChip(b.treg?.tilstand, "Makro 6 til 18 mnd: ")}${b.treg?.score != null ? `<span class="muted tnum" style="font-size:12px">score ${b.treg.score}/100</span>` : ""}
+      ${tChip(b.naa?.tilstand, "Prisene nå 1 til 3 mnd: ")}<span class="muted tnum" style="font-size:12px">${b.naa?.risk_off ?? 0} av ${b.naa?.av ?? 0} komponenter risk-off</span>
+      ${b.motstrid ? `<span class="mac y">motstrid</span>` : ""}</div>`;
+}
+function mbFliser(b, ider){
+  const mt = (b.makrotall || []).filter(x => ider.includes(x.id) && x.verdi != null).sort((x, y) => ider.indexOf(x.id) - ider.indexOf(y.id));
+  if (!mt.length) return "";
+  return `<div class="tiles">${mt.map(x => `<div class="tile static"><span class="big tnum">${nTall(x.verdi, 2)}${x.enhet === "%" ? "<small> %</small>" : ""}</span><span class="lab">${esc(x.navn)}<br><small>${esc(kortDato(x.dato))}${x.trend?.m3 != null ? " · 3 mnd " + dTall(x.trend.m3, "", 2) : ""}${x.trend?.persentil_12m != null ? " · persentil 12 mnd " + nTall(x.trend.persentil_12m, 0) : (x.persentil_1aar != null ? " · persentil 1 år " + nTall(x.persentil_1aar, 0) : "")}</small></span></div>`).join("")}</div>`;
+}
 function markedsbildeKropp(ma){
   const b = NY.markedsbilde;
   if (!b) return `<p>${esc(ma?.verdikt || "")}</p><p class="muted" style="font-size:12px;margin:0">Det samlede markedsbildet regnes i morgenkjøringen og kommer med neste kjøring.</p>`;
   const k = b.naa?.komponenter || [];
   const rad = x => `<tr><td>${esc(x.navn)}</td><td class="tnum">${x.verdi != null ? nTall(x.verdi, x.id === "vix_term" ? 2 : 0) + (x.enhet === "%" ? " %" : "") : esc(x.tekst || "–")}</td>
     <td>${tChip(x.tilstand)}</td><td class="muted" style="font-size:12px">${esc(x.regel || "")}</td></tr>`;
-  const mt = (b.makrotall || []).filter(x => ["T10Y2Y", "DTWEXBGS", "hy_spread", "nfci", "vix"].includes(x.id));
-  return `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
-      ${tChip(b.treg?.tilstand, "Makro 6 til 18 mnd: ")}${b.treg?.score != null ? `<span class="muted tnum" style="font-size:12px">score ${b.treg.score}/100</span>` : ""}
-      ${tChip(b.naa?.tilstand, "Prisene nå 1 til 3 mnd: ")}<span class="muted tnum" style="font-size:12px">${b.naa?.risk_off ?? 0} av ${b.naa?.av ?? 0} komponenter risk-off</span>
-      ${b.motstrid ? `<span class="mac y">motstrid</span>` : ""}</div>
+  return `${mbChips(b)}
     <p style="margin:0"><b>${esc(b.setning || "")}</b></p>
     ${ma?.verdikt ? `<p class="muted" style="margin:0;font-size:13px">MarketAnalyzor: ${esc(ma.verdikt)}</p>` : ""}
     <div class="tblwrap"><table class="tbl"><thead><tr><th>Komponent</th><th>Verdi</th><th>Tilstand</th><th>Regel</th></tr></thead><tbody>${k.map(rad).join("")}</tbody></table></div>
-    ${mt.length ? `<div class="tiles">${mt.map(x => `<div class="tile static"><span class="big tnum">${nTall(x.verdi, 2)}${x.enhet === "%" ? "<small> %</small>" : ""}</span><span class="lab">${esc(x.navn)}<br><small>${esc(kortDato(x.dato))}${x.trend?.m3 != null ? " · 3 mnd " + dTall(x.trend.m3, "", 2) : ""}${x.trend?.persentil_12m != null ? " · persentil 12 mnd " + nTall(x.trend.persentil_12m, 0) : (x.persentil_1aar != null ? " · persentil 1 år " + nTall(x.persentil_1aar, 0) : "")}</small></span></div>`).join("")}</div>` : ""}
+    ${mbFliser(b, ["T10Y2Y", "DTWEXBGS", "hy_spread", "nfci", "vix"])}
     <p class="muted" style="font-size:12px;margin:0">${esc(b.merknad || "")} ${esc(b.treg?.note || "")}</p>`;
 }
 /* --- Posisjonskonteksten: det som bare gjelder det jeg eier og følger --- */
@@ -2086,12 +2095,26 @@ function dagsformCard(){
   return `<button class="panel" data-go="helse" data-hsub="form" style="width:100%;text-align:left;cursor:pointer;border:1px solid var(--line)">
     <div class="eyebrow">Dagsform</div>${f.tekst ? `<div style="font-size:15px">${esc(f.tekst)}</div>` : ""}${f.logg ? `<div class="muted" style="font-size:13px">${esc(f.logg)}</div>` : ""}</button>`;
 }
+/* Markedskortet paa I dag: samme bilde og samme ord som Marked, Naa, bare kortere.
+   Kortet leser markedsbildet som koden har regnet (tools/markedsbilde.py). Faller tilbake
+   til MarketAnalyzors egen setning hvis markedsbildet ikke er skrevet enda. */
 function marketPulse(){
-  const d = S.ma; if (!d || d.status !== "ok") return "";
-  const t = d.trend?.uke, dm = t && !t.mangler ? t.makro_score : null;
-  return `<button class="panel market-pulse" data-go="marked" style="width:100%;text-align:left;cursor:pointer;border:1px solid var(--line)">
-    <div class="eyebrow">Marked</div><div style="font-size:15px">${esc(d.verdikt || "")}</div>
-    <div class="muted" style="font-size:12px">${d.makro?.regime ? esc(d.makro.regime) : ""}${dm != null ? `, makro-score ${dTall(dm)} siste uke` : ""}. Fra MarketAnalyzor, ikke en anbefaling.</div></button>`;
+  const b = NY.markedsbilde, d = S.ma;
+  if (!b && (!d || d.status !== "ok")) return "";
+  const dato = b?.date || d?.kilde_dato || d?.date;
+  if (!b) return `<button class="panel stack market-pulse" data-go="marked">
+    <div class="spread"><div class="eyebrow">Marked</div><span class="muted tnum" style="font-size:12px">${esc(kortDato(dato))}</span></div>
+    <div style="font-size:15px">${esc(d.verdikt || "")}</div>
+    <div class="muted" style="font-size:12px">Det samlede markedsbildet kommer med neste kjøring. Fra MarketAnalyzor, ikke en anbefaling.</div></button>`;
+  const av = (b.naa?.komponenter || []).filter(x => x.tilstand === "risk-off").map(x => x.navn);
+  const paa = (b.naa?.komponenter || []).filter(x => x.tilstand === "risk-on").map(x => x.navn);
+  return `<button class="panel stack market-pulse" data-go="marked">
+    <div class="spread"><div class="eyebrow">Marked</div><span class="muted tnum" style="font-size:12px">${esc(kortDato(dato))}</span></div>
+    ${mbChips(b)}
+    <div style="font-size:15px"><b>${esc(b.setning || "")}</b></div>
+    ${av.length ? `<div class="muted" style="font-size:12px">Risk-off: ${esc(av.join(", "))}.${paa.length ? ` Risk-on: ${esc(paa.join(", "))}.` : ""}</div>` : ""}
+    ${mbFliser(b, ["vix", "T10Y2Y", "hy_spread", "DTWEXBGS"])}
+    <div class="muted" style="font-size:12px">Fra MarketAnalyzor og egne tall. Trykk for komponentene med terskler. Beskrivelse, ikke en anbefaling.</div></button>`;
 }
 
 /* Soevnregularitet. SRI er det beste maalet vi har paa noe du faktisk kan styre:
