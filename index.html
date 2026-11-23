@@ -1014,7 +1014,6 @@ function vToday(){
     <button class="tile" data-go="nyheter"><span class="big tnum">${w ? w.items.length : "–"}</span><span class="lab">nyhetssaker</span></button>
     <button class="tile" data-go="laering"><span class="big tnum">${S.Lloaded.geo || S.Lloaded.hist ? dueCount("geo") + dueCount("hist") + dueCount("own") + dueCount("vg3") : "–"}</span><span class="lab">kort i dag</span></button>
   </div>
-  ${briefCard()}
   ${marketPulse()}
   ${kalCard()}
   ${dagsformCard()}
