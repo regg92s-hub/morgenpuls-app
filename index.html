@@ -343,7 +343,35 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
 .confirm{background:var(--accent-soft);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
 /* læring */
-.subtabs{display:flex;gap:8px;flex-wrap:wrap}
+.subtabs{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity;padding:2px 0}
+.subtabs::-webkit-scrollbar{display:none}
+.subtabs>.btn{flex:0 0 auto;scroll-snap-align:start}
+.subtabs.ruller{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+/* Sammenleggbare seksjoner: lagt på panelene i Mine posisjoner etter tegning, tilstanden huskes per enhet */
+details.seksjon>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px}
+details.seksjon>summary::-webkit-details-marker{display:none}
+details.seksjon>summary>*:first-child{flex:1;min-width:0;flex-wrap:wrap}
+details.seksjon,.stack>*{min-width:0}
+/* details legger innholdet i en egen intern boks, så grid-oppsettet i .stack virker ikke der. Blokklayout holder tabellene innenfor */
+details.seksjon{display:block}
+details.seksjon>*+*{margin-top:12px}
+details.seksjon>summary::after{content:"";width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .15s;flex:0 0 auto;margin-right:4px}
+details.seksjon[open]>summary::after{transform:rotate(-135deg)}
+details.seksjon:not([open]){padding-top:14px;padding-bottom:14px}
+details.seksjon:not([open])>summary h2{font-size:17px}
+.mptall{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.mptall>div{display:flex;flex-direction:column;gap:2px}
+.mptall .big{font-size:20px;font-weight:700;align-self:flex-start}
+.mptall .lab{font-size:12px;color:var(--muted)}
+.posstatus{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:13px}
+/* Kortvisning: brede tabeller som ikke får plass blir ett kort per rad, med kolonnenavnet foran hver verdi */
+.tbl.kort{min-width:0}
+.tbl.kort thead{display:none}
+.tbl.kort tr{display:block;border-bottom:1px solid var(--line);padding:8px 0}
+.tbl.kort tr:last-child{border-bottom:0}
+.tbl.kort td{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border:0;padding:2px 0;text-align:right}
+.tbl.kort td:first-child{display:block;text-align:left;padding-bottom:4px}
+.tbl.kort td[data-l]:not(:first-child)::before{content:attr(data-l);color:var(--muted);font-family:var(--f-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;text-align:left;flex:0 0 auto}
 .mac{display:inline-flex;align-items:center;gap:5px;border-radius:7px;padding:3px 7px;font-size:12.5px;line-height:1.3;white-space:nowrap;background:var(--surface-2);color:var(--muted);border:1px solid transparent}
 .mac b{font-weight:700}.mac i{font-style:normal}
 .mac.g{background:var(--ok-soft);color:var(--ok)}.mac.y{background:var(--warn-soft);color:var(--warn)}.mac.r{background:var(--accent-soft);color:var(--accent)}.mac.n{border-color:var(--line)}
@@ -925,7 +953,54 @@ function renderHeader(){
 function render(){ renderHeader(); if (S.view === "notater" && (editorFocused() || (N.importing && document.activeElement?.closest?.(".imp") && document.activeElement.matches("input:not([type=file]),textarea,select")) || (N.capturing && document.activeElement?.closest?.(".cap") && document.activeElement.matches("input:not([type=file]),textarea,select")))) return; if (S.view === "sok" && document.activeElement?.id === "gsearch") { const r = $("#sres"); if (r) r.innerHTML = searchResults(); return; } const m = $("#main");
   const fn = {idag:vToday, helse:vHealth, finans:vFinance, marked:vMarked, nyheter:vWorld, verktoy:vTools, laering:vLearn, rapport:vRapport, notater:vNotes, sok:vSearch}[S.view];
   const vent = venterPaa(); if (vent) { m.innerHTML = `<section class="view">${henter(vent)}</section>`; return; }
-  m.innerHTML = `<section class="view">${fn()}</section>`; }
+  m.innerHTML = `<section class="view">${fn()}</section>`; etterTegning(m); }
+/* Etter hver tegning: underfanene ruller til valgt fane, brede tabeller blir kort, og panelene i
+   Mine posisjoner blir sammenleggbare. Gjøres i DOM-en, så visningsfunksjonene trenger ikke vite om det. */
+function etterTegning(m){
+  m.querySelectorAll(".subtabs").forEach(t => {
+    const a = t.querySelector(".primary");
+    if (a && t.scrollWidth > t.clientWidth) t.scrollLeft = Math.max(0, a.getBoundingClientRect().left - t.getBoundingClientRect().left + t.scrollLeft - 16);
+    const kant = () => t.classList.toggle("ruller", t.scrollLeft + t.clientWidth < t.scrollWidth - 4);
+    kant(); t.addEventListener("scroll", kant, {passive: true});
+  });
+  if (S.view === "finans" && (S.finSub === "pos" || S.finSub === "trading" || !S.finSub)) seksjoner(m);
+  kortTabeller(m);
+}
+function kortTabeller(m){
+  if (!m) return;
+  m.querySelectorAll(".tblwrap > table.tbl").forEach(tb => {
+    tb.classList.remove("kort"); tb.style.minWidth = "0";
+    const hode = [...tb.querySelectorAll("thead th")].map(th => th.textContent.trim());
+    tb.querySelectorAll("tbody tr").forEach(tr => [...tr.children].forEach((td, i) => { if (hode[i] && !td.dataset.l) td.dataset.l = hode[i]; }));
+    const w = tb.parentElement;
+    if (w.clientWidth > 0 && w.scrollWidth > w.clientWidth + 4) tb.classList.add("kort");
+  });
+}
+let kortT = null; addEventListener("resize", () => { clearTimeout(kortT); kortT = setTimeout(() => kortTabeller($("#main")), 150); });
+// Lukket som standard: det som er historikk eller bakgrunn. Resten er åpent. Bare avvik fra standarden lagres.
+const SEK_LUKKET = new Set(["egenkapital", "historikk", "fullførte handler", "avstand til pivot", "innsidekjøp (form 4)", "kelly på egen historikk", "implisitt volatilitet"]);
+const sekLes = () => { try { return JSON.parse(store.get("mp.sek") || "{}") || {}; } catch { return {}; } };
+function seksjoner(m){
+  const lagret = sekLes();
+  m.querySelectorAll(".view .panel").forEach(p => {
+    if (p.tagName !== "DIV" || p.closest("details,button")) return;
+    const f = p.firstElementChild; if (!f) return;
+    const h2 = f.tagName === "H2" ? f : f.matches(".spread") ? f.querySelector(":scope > h2") : null;
+    if (!h2) return;
+    const id = h2.textContent.trim().toLowerCase(), std = !SEK_LUKKET.has(id);
+    const d = document.createElement("details"); d.className = p.className + " seksjon"; d.dataset.sek = id; d.dataset.std = std ? "1" : "0";
+    d.open = id in lagret ? lagret[id] : std;
+    const sm = document.createElement("summary"); sm.appendChild(f); d.appendChild(sm);
+    while (p.firstChild) d.appendChild(p.firstChild);
+    p.replaceWith(d);
+  });
+}
+document.addEventListener("toggle", e => {
+  const d = e.target; if (!d.matches?.("details[data-sek]")) return;
+  const l = sekLes(); if (d.open === (d.dataset.std === "1")) delete l[d.dataset.sek]; else l[d.dataset.sek] = d.open;
+  store.set("mp.sek", JSON.stringify(l));
+  if (d.open) kortTabeller(d);
+}, true);
 /* Første oppstart i appen: hovedfilen (posisjoner, marked, status) er klar først, de store
    samlingene kommer etter. En visning som trenger en av dem viser «henter» i stedet for en
    tom liste, slik at ingenting ser borte ut. Er appen ikke koblet ennå, gjelder det samme. */
@@ -2380,16 +2455,21 @@ function marketPulse(){
     <div class="spread"><div class="eyebrow">Marked</div><span class="muted tnum" style="font-size:12px">${esc(kortDato(dato))}</span></div>
     <div style="font-size:15px">${esc(d.verdikt || "")}</div>
     <div class="muted" style="font-size:12px">Det samlede markedsbildet kommer med neste kjøring. Fra MarketAnalyzor, ikke en anbefaling.</div></button>`;
-  const av = (b.naa?.komponenter || []).filter(x => x.tilstand === "risk-off").map(x => x.navn);
-  const paa = (b.naa?.komponenter || []).filter(x => x.tilstand === "risk-on").map(x => x.navn);
+  // Kort: tilstand, én setning og tre tall. Komponentene med terskler ligger under Marked, Nå.
+  const mt = id => (b.makrotall || []).find(x => x.id === id);
+  const vix = mt("vix"), hy = mt("hy_spread"), br = NY.bredde?.naa?.["50"], sp = (NY.indeksbredde?.universer || []).find(x => x.id === "sp500");
+  const tall = [
+    br != null ? ["Bredde 50 d", bTall(br, 0) + " %", bFarge(br)] : null,
+    sp ? ["S&P 500 over 50 d", bTall(sp.naa["50"], 0) + " %", bFarge(sp.naa["50"])] : null,
+    vix ? ["VIX", nTall(vix.verdi, 1), ""] : null,
+    hy ? ["Kreditt HY", nTall(hy.verdi, 2) + " pp", ""] : null,
+  ].filter(Boolean).slice(0, 3);
   return `<button class="panel stack market-pulse" data-go="marked">
     <div class="spread"><div class="eyebrow">Marked</div><span class="muted tnum" style="font-size:12px">${esc(kortDato(dato))}</span></div>
     ${mbChips(b)}
-    ${breddeKort()}
     <div style="font-size:15px"><b>${esc(b.setning || "")}</b></div>
-    ${av.length ? `<div class="muted" style="font-size:12px">Risk-off: ${esc(av.join(", "))}.${paa.length ? ` Risk-on: ${esc(paa.join(", "))}.` : ""}</div>` : ""}
-    ${mbFliser(b, ["vix", "T10Y2Y", "hy_spread", "DTWEXBGS"])}
-    <div class="muted" style="font-size:12px">Fra MarketAnalyzor og egne tall. Trykk for komponentene med terskler. Beskrivelse, ikke en anbefaling.</div></button>`;
+    <div class="mptall">${tall.map(([l, v, f]) => `<div><span class="big tnum ${f ? "mac " + f : ""}">${v}</span><span class="lab">${esc(l)}</span></div>`).join("")}</div>
+    <div class="muted" style="font-size:12px">Trykk for komponentene, bredden og makrotallene. Beskrivelse, ikke en anbefaling.</div></button>`;
 }
 
 /* Soevnregularitet. SRI er det beste maalet vi har paa noe du faktisk kan styre:
@@ -3293,6 +3373,21 @@ function maaler(navn, verdi, tak, enhet){
       <div class="progress" style="margin-top:6px"><i style="width:${andel.toFixed(0)}%${over ? ";background:var(--neg,#c0392b)" : ""}"></i></div></div>
     <div class="lt"><span class="tnum ${over ? "neg" : ""}">${verdi.toFixed(2)}${esc(enhet || " %")}</span></div></div>`;
 }
+/* Én linje med det som betyr noe før resten av siden: posisjoner, risiko mot grensene, stopp og neste resultat. */
+function posStatus(T, pos){
+  const r = S.risiko || {}, g = r.grenser || {};
+  const egne = new Set([...(pos || []).map(x => x.symbol), ...((S.config?.companies || []).map(x => x.ticker))].filter(Boolean));
+  const neste = ((NY.hendelser?.hendelser) || []).filter(x => x.art === "resultat" && x.dato >= osloDate() && egne.has(x.ticker)).sort((a, b) => String(a.dato).localeCompare(String(b.dato)))[0];
+  const stoppet = r.stoppet || T?.lossstop_triggered;
+  const del = (t, c = "") => `<span class="${c}">${t}</span>`;
+  return `<div class="panel posstatus" role="status">
+    ${del(`<b>${pos.length}</b> ${pos.length === 1 ? "åpen posisjon" : "åpne posisjoner"}`)}
+    ${r.aapen_risiko_pct != null ? del(`åpen risiko <b class="tnum">${nTall(r.aapen_risiko_pct, 1)} %</b> av ${nTall(g.aapen_risiko ?? 7.5, 1)} %`, r.aapen_risiko_pct > (g.aapen_risiko ?? 7.5) ? "warn" : "") : ""}
+    ${r.eksponering_pct != null ? del(`eksponering <b class="tnum">${nTall(r.eksponering_pct, 0)} %</b>`, r.eksponering_pct > 100 ? "warn" : "") : ""}
+    ${del(stoppet ? "<b>stopp utløst</b>" : `dagsstopp om ${r.margin_til_dagsstopp != null ? nTall(r.margin_til_dagsstopp, 1) + " pp" : "–"}`, stoppet ? "warn" : "muted")}
+    ${neste ? del(`neste resultat: <b>${esc(neste.ticker)}</b> ${esc(kortDato(neste.dato))}`, "muted") : ""}
+  </div>`;
+}
 function vRisiko(){
   const r = S.risiko;
   if (!r) return "";
@@ -3337,8 +3432,9 @@ function vTrading(){
   const st = T.stats || {}, age = T.generated_at ? Math.round((Date.now() - new Date(T.generated_at)) / 36e5) : null;
   const pos = T.positions || [], orders = T.orders || [], trades = T.trades || [];
   const openRisk = pos.reduce((a, p) => a + (p.risk_to_stop || 0), 0), openPnl = pos.reduce((a, p) => a + (p.pnl || 0), 0);
+  const status = posStatus(T, pos);
   const models = Object.entries(st.by_model || {}), months = Object.entries(st.by_month || {}).sort((a,b) => b[0].localeCompare(a[0]));
-  return `
+  return `${status}
   <div class="spread"><div class="stack" style="gap:4px"><div class="eyebrow">Breakout-motoren · ${T.account_type === "papir" ? "papirkonto" : "live"} · ${esc(T.currency || "USD")}</div><h1>${usd(T.equity)}</h1></div>
     <div class="row"><span class="pill ${age !== null && age < 30 ? "ok" : "warn"}">${T.generated_at ? "Kjøring " + esc(fmtTime(T.generated_at)) + " " + esc(String(T.generated_at).slice(0,10)) : "Ukjent tid"}</span>${T.lossstop_triggered ? `<span class="pill warn">Tapsstopp aktiv</span>` : ""}</div></div>
   <div class="tiles">
