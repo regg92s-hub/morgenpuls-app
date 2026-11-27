@@ -465,6 +465,9 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
   let Q = [];                            // skrivekø som overlever omstart
   let saving = false, lastErr = null;
   const listeners = new Set();
+  // Store samlinger som fortsatt lastes ned ved første oppstart. Appen viser «henter»
+  // for visningene som trenger dem, i stedet for en tom liste som ser ut som tapte data.
+  const VENTER = new Set();
   const notify = () => listeners.forEach(l => { try { l(); } catch {} });
   const save = () => { KV.set("ov", OV).catch(() => {}); KV.set("meta", META).catch(() => {}); KV.set("queue", Q).catch(() => {}); };
 
@@ -626,7 +629,13 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       notify(); return false;
     }
     const forrige = BUNDLE.collections || {};
+    const ekstra = d.ekstra || [], forste = !Object.keys(forrige).length;
     BUNDLE = { generated_at: d.generated_at || null, collections: d.collections || {}, assets: d.assets || {} };
+    // Til de store filene er hentet, gjelder forrige utgave. Ved første oppstart finnes
+    // ingen forrige utgave: da slippes appen til med hovedfilen (posisjoner, marked,
+    // status) med én gang, og de store samlingene kommer etter hvert.
+    for (const navn of ekstra) BUNDLE.collections[navn] = forrige[navn] || {};
+    if (forste) { ekstra.forEach(n => VENTER.add(n)); ready(); notify(); }
     // Store samlinger ligger i egne filer (bundle/<navn>.json) slik at den daglige
     // kopien holder seg liten. Feiler en av dem, beholder vi den forrige utgaven
     // i stedet for å vise en tom samling.
@@ -635,6 +644,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
       let docs = null;
       try { const rr = await gh(`${R}/contents/bundle/${navn}.json?ref=${BRANCH}`, { raw: true }); if (rr.ok) docs = (await rr.json()).docs || {}; } catch {}
       BUNDLE.collections[navn] = docs || forrige[navn] || {};
+      if (VENTER.delete(navn)) notify();
     }));
     await KV.set("bundle", BUNDLE);
     const cut = BUNDLE.generated_at || "";
@@ -839,6 +849,7 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:8px}
   async function gjenopprett(path, sha) { const d = await hentVersjon(path, sha); await write(path, "set", d); return d; }
 
   window.__mp = { refresh, pump, pull, historikk, hentVersjon, gjenopprett, utloep: () => { const o = {}; for (const k of ["les", "skriv"]) { const e = utloep(k); o[k] = e ? { dato: String(e).slice(0, 10), dager: dagerTil(e) } : null; } return o; },
+    venter: navn => VENTER.has(navn),
     state: () => ({ head: META.head, bundle: BUNDLE.generated_at, kø: Q.length, overlay: Object.keys(OV).length, feil: lastErr }) };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();
@@ -913,7 +924,20 @@ function renderHeader(){
 /* ---------- render ---------- */
 function render(){ renderHeader(); if (S.view === "notater" && (editorFocused() || (N.importing && document.activeElement?.closest?.(".imp") && document.activeElement.matches("input:not([type=file]),textarea,select")) || (N.capturing && document.activeElement?.closest?.(".cap") && document.activeElement.matches("input:not([type=file]),textarea,select")))) return; if (S.view === "sok" && document.activeElement?.id === "gsearch") { const r = $("#sres"); if (r) r.innerHTML = searchResults(); return; } const m = $("#main");
   const fn = {idag:vToday, helse:vHealth, finans:vFinance, marked:vMarked, nyheter:vWorld, verktoy:vTools, laering:vLearn, rapport:vRapport, notater:vNotes, sok:vSearch}[S.view];
+  const vent = venterPaa(); if (vent) { m.innerHTML = `<section class="view">${henter(vent)}</section>`; return; }
   m.innerHTML = `<section class="view">${fn()}</section>`; }
+/* Første oppstart i appen: hovedfilen (posisjoner, marked, status) er klar først, de store
+   samlingene kommer etter. En visning som trenger en av dem viser «henter» i stedet for en
+   tom liste, slik at ingenting ser borte ut. Er appen ikke koblet ennå, gjelder det samme. */
+const STORE_SAMLINGER = {idag: ["feed"], helse: ["helse"], nyheter: ["feed"], notater: ["notater"]};
+function venterPaa(){
+  if (S.kobler) return "dataene";
+  const v = window.__mp?.venter; if (!v) return null;
+  const sub = S.view === "laering" && S.learnSub === "vg3" ? ["kort-vg3"] : S.view === "marked" ? (S.mSub === "screener" ? ["screener", "aksjer"] : ["markedma"]) : S.view === "finans" && S.finSub === "news" ? ["feed"] : [];
+  const navn = [...(STORE_SAMLINGER[S.view] || []), ...sub].filter(n => v(n));
+  return navn.length ? ({feed: "nyhetene og briefen", helse: "helsedataene", notater: "notatene", "kort-vg3": "kortene", markedma: "markedsdataene", screener: "screeneren", aksjer: "screeneren"})[navn[0]] : null;
+}
+function henter(hva){ return `<div class="empty" role="status" aria-live="polite"><b>Henter ${esc(hva)} …</b><br>Første oppstart på denne enheten laster ned alt fra repoet. Neste gang går det med én gang.</div>`; }
 
 function emptyFeed(what){ return `<div class="empty"><b>Ingen ${what} for denne dagen ennå.</b><br>Den daglige oppdateringen kjører hver morgen og fyller denne fanen. Første kjøring legges inn i dag.</div>`; }
 
@@ -4364,7 +4388,8 @@ async function boot(){
   loadGeo(); loadHist();
   const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
   if (!window.claude?.use) { offline(); return; }
-  const db = await claude.use("db"); S.db = db;
+  S.kobler = true;
+  const db = await claude.use("db"); S.db = db; S.kobler = false;
   if (!db) { offline(); return; }
   db.collection("feed").orderBy("date", "desc").limit(60).onSnapshot(snap => {
     const curDate = feed()?.date; S.feeds = snap.docs.map(d => ({id: d.id, ...thaw(d)})).sort((a, b) => String(b.date).localeCompare(String(a.date)));
