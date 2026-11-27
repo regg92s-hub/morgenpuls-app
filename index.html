@@ -1570,7 +1570,7 @@ function scRad(x){
    Alt her viser tall som koden har regnet ut i kjøringen. Appen regner ikke om noe,
    med ett unntak: planBeregn, som har samme aritmetikk som tools/handelsplan.py og
    krysstestes mot den (tools/tester/test_plan_krysstest.cjs). Ingenting her er råd. */
-const NY = {friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null, markedsbilde: null, bredde: null, sentiment: null, iv: null, kelly: null, longevity: null, bioalder: null, merk: [], merkAnalyse: null,
+const NY = {indeksbredde: null, bransje: null, friskhet: null, backup: null, skjemafeil: null, brief: null, cot: null, norsk: null, strom: [], hendelser: null, pivot: null, innsider: null, markedsbilde: null, bredde: null, sentiment: null, iv: null, kelly: null, longevity: null, bioalder: null, merk: [], merkAnalyse: null,
   plan: null, planer: [], labb: [], beslutning: [], sporsmal: [], varsel: [], vo2: [], soner: [], akt: [], sig: null, planNy: false, ventSvar: null};
 const nTall = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("nb-NO", {maximumFractionDigits: d, minimumFractionDigits: 0});
 const kortDato = s => s ? String(s).slice(8, 10) + "." + String(s).slice(5, 7) + "." : "–";
@@ -1590,7 +1590,9 @@ function nyAbonner(db){
   on("innsider", a => { NY.innsider = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("sentiment", a => { NY.sentiment = senest(a)[0] || null; }, () => S.view === "marked");
   on("markedsbilde", a => { NY.markedsbilde = senest(a)[0] || null; }, () => S.view === "marked" || S.view === "idag");
-  on("bredde", a => { NY.bredde = senest(a)[0] || null; }, () => S.view === "marked" || S.view === "idag");
+  on("bredde", a => { NY.bredde = senest(a)[0] || null; }, () => S.view === "marked" || S.view === "idag" || (S.view === "finans" && S.finSub === "pos"));
+  on("indeksbredde", a => { NY.indeksbredde = senest(a)[0] || null; }, () => S.view === "marked" || S.view === "idag" || (S.view === "finans" && S.finSub === "pos"));
+  on("bransjebredde", a => { NY.bransje = senest(a)[0] || null; }, () => S.view === "marked" && S.mSub === "bredde");
   on("iv", a => { NY.iv = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("kelly", a => { NY.kelly = senest(a)[0] || null; }, () => S.view === "finans" && S.finSub === "pos");
   on("longevity", a => { NY.longevity = senest(a)[0] || null; }, () => S.view === "helse" && S.hSub === "labb");
@@ -1800,7 +1802,9 @@ async function lagreBeslutning(){
 /* --- Kommandopalett (Ctrl/Cmd + K) --- */
 const PALETT = [
   ["Idag", () => go("idag")], ["Helse: form", () => { S.hSub = "form"; store.set("mp.hsub", "form"); go("helse"); }], ["Helse: labb", () => { S.hSub = "labb"; store.set("mp.hsub", "labb"); go("helse"); }],
-  ["Marked: bredde og soner", () => { S.mSub = "bredde"; store.set("mp.msub", "bredde"); go("marked"); }], ["Marked: makro og kontekst", () => { S.mSub = "makro"; store.set("mp.msub", "makro"); go("marked"); }], ["Marked: roadmaps", () => { S.mSub = "roadmap"; store.set("mp.msub", "roadmap"); go("marked"); }],
+  ["Marked: bredde og soner", () => { S.mSub = "bredde"; S.bSub = "oversikt"; store.set("mp.msub", "bredde"); store.set("mp.bsub", "oversikt"); go("marked"); }],
+  ["Marked: indekser, sektorer og intern styrke", () => { S.mSub = "bredde"; S.bSub = "indekser"; store.set("mp.msub", "bredde"); store.set("mp.bsub", "indekser"); go("marked"); }],
+  ["Marked: bransjebredde siden 1926", () => { S.mSub = "bredde"; S.bSub = "historikk"; store.set("mp.msub", "bredde"); store.set("mp.bsub", "historikk"); go("marked"); }], ["Marked: makro og kontekst", () => { S.mSub = "makro"; store.set("mp.msub", "makro"); go("marked"); }], ["Marked: roadmaps", () => { S.mSub = "roadmap"; store.set("mp.msub", "roadmap"); go("marked"); }],
   ["Posisjoner og handelsplan", () => go("trading")], ["Beslutningslogg", () => { S.vkSub = "beslutning"; store.set("mp.vksub", "beslutning"); go("verktoy"); }],
   ["Hurtigfangst (ny innboks-oppføring)", () => { go("notater"); N.open = null; N.importing = false; N.capturing = true; render(); }],
   ["Spør dataene dine", () => { go("idag"); setTimeout(() => $("#sporin")?.focus(), 80); }], ["Rapport", () => go("rapport")], ["Læring", () => go("laering")], ["Nyheter", () => go("nyheter")], ["Mine posisjoner", () => go("finans")], ["Søk", () => go("sok")]];
@@ -1922,7 +1926,7 @@ function markedsbildeKropp(ma){
   const b = NY.markedsbilde;
   if (!b) return `<p>${esc(ma?.verdikt || "")}</p><p class="muted" style="font-size:12px;margin:0">Det samlede markedsbildet regnes i morgenkjøringen og kommer med neste kjøring.</p>`;
   const k = b.naa?.komponenter || [];
-  const rad = x => `<tr><td>${esc(x.navn)}</td><td class="tnum">${x.verdi != null ? nTall(x.verdi, x.id === "vix_term" ? 2 : 0) + (x.enhet === "%" ? " %" : "") : esc(x.tekst || "–")}</td>
+  const rad = x => `<tr><td>${esc(x.navn)}</td><td class="tnum">${x.verdi != null ? nTall(x.verdi, x.id === "vix_term" || x.id === "kreditt" ? 2 : 0) + (x.enhet === "%" ? " %" : x.enhet === "pp" ? " pp" : "") : esc(x.tekst || "–")}${x.id === "kreditt" && x.persentil_1aar != null ? `<br><span class="muted" style="font-size:11px">persentil ${nTall(x.persentil_1aar, 0)} · 20 d ${dTall(x.endring_20, " pp", 2)}</span>` : ""}</td>
     <td>${tChip(x.tilstand)}</td><td class="muted" style="font-size:12px">${esc(x.regel || "")}</td></tr>`;
   return `${mbChips(b)}
     ${breddeKort()}
@@ -1948,8 +1952,9 @@ function posKontekst(){
     <p class="muted" style="font-size:12px;margin:0">Kjøp meldt på Form 4 hos SEC. Beskrivelse, ikke signal.</p></div>` : "";
   const hend = res.length ? `<div class="panel stack"><h2>Resultater fremover</h2><div class="notes">${res.map(x => { const dg = daysSince(x.dato) * -1; return `<div class="lrow"><div class="lco"><b>${esc(x.ticker || x.tittel)}</b><span class="muted">${esc(x.tittel)}</span></div><div class="lt tnum">${esc(kortDato(x.dato))}${dg >= 0 ? ` <span class="muted">om ${dg} d</span>` : ""}</div></div>`; }).join("")}</div>
     <p class="muted" style="font-size:12px;margin:0">Datoene er annonserte eller anslåtte, hentet fra Yahoo og SEC.</p></div>` : "";
-  if (!piv && !inn && !hend && !NY.iv && !NY.kelly) return "";
-  return `<div class="stack">${piv}${ivPanel()}${kellyPanel()}${inn}${hend}</div>`;
+  const es = egneSonerPanel();
+  if (!es && !piv && !inn && !hend && !NY.iv && !NY.kelly) return "";
+  return `<div class="stack">${es}${piv}${ivPanel()}${kellyPanel()}${inn}${hend}</div>`;
 }
 /* --- Markedsbredde: hvor mange deltar, hvor er det utbombet og hvor er det overkjøpt.
    Alt kommer ferdig regnet fra tools/bredde.py. Appen fargelegger og sorterer, den regner ikke. --- */
@@ -1958,19 +1963,11 @@ const bFarge = p => p == null ? "n" : p >= 80 ? "g" : p >= 50 ? "g" : p >= 20 ? 
 const bSoneChip = s => { const x = BSONE[s] || ["n", s || "–"]; return `<span class="mac ${x[0]}">${esc(x[1])}</span>`; };
 const bTall = (v, d = 0, suf = "") => v == null ? "–" : nTall(v, d) + suf;
 function breddeGraf(s){
-  const d = s?.datoer || [], a = s?.pct50 || [], b = s?.pct200 || [];
+  const d = s?.datoer || [];
   if (d.length < 10) return "";
-  const w = 640, h = 150, pad = 22;
-  const x = i => pad + i * (w - pad - 8) / (d.length - 1), y = v => h - 16 - (v / 100) * (h - 26);
-  const linje = (arr, farge) => { let p = "", pen = false;
-    arr.forEach((v, i) => { if (v == null) { pen = false; return; } p += (pen ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); pen = true; });
-    return `<path d="${p}" fill="none" stroke="${farge}" stroke-width="1.8" stroke-linejoin="round"/>`; };
-  const niv = v => `<line x1="${pad}" y1="${y(v)}" x2="${w - 8}" y2="${y(v)}" stroke="var(--line)" stroke-dasharray="3 3"/><text x="2" y="${y(v) + 4}" font-size="10" fill="var(--muted)">${v}</text>`;
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="Andel over 50- og 200-dagssnittet siste år">
-    ${niv(20)}${niv(50)}${niv(80)}${linje(b, "var(--muted)")}${linje(a, "var(--accent)")}
-    <text x="${pad}" y="${h - 2}" font-size="10" fill="var(--muted)">${esc(d[0] || "")}</text>
-    <text x="${w - 8}" y="${h - 2}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(d[d.length - 1] || "")}</text></svg>
-    <div class="muted" style="font-size:12px">Farget linje: andel over 50-dagssnittet. Grå: over 200-dagssnittet. Stiplet: 20, 50 og 80 prosent.</div>`;
+  const P = [["6m", "6 mnd", 183], ["1a", "1 år", 365]];
+  return `<div class="spread"><b style="font-size:14px">Andel over snittet</b>${periodeValg("bredde", P)}</div>
+    ${linjeGraf(d, [{v: s.pct50, farge: "var(--accent)", navn: "Over 50-dagssnittet"}, {v: s.pct200, farge: "var(--muted)", navn: "Over 200-dagssnittet"}], {min: 0, max: 100, niv: [20, 50, 80], fra: periodeFra("bredde", d, P), tittel: "Andel over 50- og 200-dagssnittet"})}`;
 }
 function breddeListe(tittel, rader, forklaring, kol){
   if (!rader || !rader.length) return `<div class="panel stack"><h2>${esc(tittel)}</h2><p class="muted" style="margin:0">Ingen i denne sonen nå.</p><p class="muted" style="font-size:12px;margin:0">${esc(forklaring)}</p></div>`;
@@ -1982,6 +1979,8 @@ function breddeListe(tittel, rader, forklaring, kol){
     <p class="muted" style="font-size:12px;margin:0">${esc(forklaring)}</p></div>`;
 }
 function vBredde(){
+  if (S.bSub === "indekser") return `<div class="stack">${breddeFaner()}${internPanel() || `<div class="panel"><p class="muted" style="margin:0">Indeksbredden regnes i morgenkjøringen og kommer med neste kjøring.</p></div>`}${sektorPanel()}</div>`;
+  if (S.bSub === "historikk") return `<div class="stack">${breddeFaner()}${historikkPanel()}</div>`;
   const b = NY.bredde;
   if (!b) return `<div class="panel stack"><h2>Markedsbredde</h2><p class="muted" style="margin:0">Bredden regnes i morgenkjøringen og kommer med neste kjøring.</p></div>`;
   const h = b.horisonter || [], gr = b.grupper || [], s = b.soner_i_alt || {};
@@ -1995,7 +1994,7 @@ function vBredde(){
     <td class="muted" style="font-size:12px">${Object.entries(g.soner || {}).filter(([k]) => k !== "nøytral").map(([k, v]) => esc((BSONE[k] || [0, k])[1]) + " " + v).join(", ") || "–"}</td></tr>`;
   const sonerad = Object.entries(s).map(([k, v]) => `${bSoneChip(k)} <span class="tnum">${v}</span>`).join(" ");
   const va = b.varsler || [];
-  return `<div class="stack">
+  const oversikt = `
     ${va.length ? `<div class="panel stack"><h2>Oppsett i dag</h2><div class="notes">${va.map(v => `<div class="lrow"><div class="lco"><b>${esc(v.tittel)}</b><span class="muted">${esc(v.tekst)}</span></div>
       <div class="lt"><span class="mac ${v.farge === "groenn" ? "g" : v.farge === "roed" ? "r" : "y"}">${esc(v.regel)}</span></div></div>`).join("")}</div>
       <p class="muted" style="font-size:12px;margin:0">Faste oppsett med regelen skrevet ut. De sier hva som er tilfelle, ikke hva du bør gjøre.</p></div>` : ""}
@@ -2009,7 +2008,8 @@ function vBredde(){
       ${b.forhold.map(f => `<tr><td><b>${esc(f.navn)}</b> <span class="muted" style="font-size:11px">dagers snitt</span></td><td class="tnum">${bTall(f.verdi, 2)}</td><td class="tnum">${bTall(f.persentil_1aar, 0)}</td>
         <td><span class="mac ${f.tilstand === "flush" ? "r" : f.tilstand === "gjeninnhenting" ? "g" : "n"}">${esc(f.tilstand)}</span></td></tr>`).join("")}</tbody></table></div>
       <p class="muted" style="font-size:12px;margin:0">Kort bredde delt på lang bredde. Under ${b.terskler?.flush ?? 0.5} er en kortsiktig flush, 1,0 er likevekt, over ${b.terskler?.gjeninnhenting ?? 1.5} er gjeninnhenting etter en flush.</p></div>` : ""}
-    <div class="panel stack"><h2>Hvor i markedet</h2>
+    ${indeksPanel()}`;
+  const soner = `<div class="panel stack"><h2>Hvor i markedet</h2>
       <div class="tblwrap"><table class="tbl"><thead><tr><th>Gruppe</th><th>Over 50 d</th><th>Over 200 d</th><th>RSI median</th><th>Soner</th></tr></thead><tbody>${gr.map(grad).join("")}</tbody></table></div>
       <p class="muted" style="font-size:12px;margin:0">Aktivaklassene er fondene MarketAnalyzor følger, regionene er de mest omsatte aksjene fra screeneren.</p></div>
     ${breddeListe("Kjøpssone", b.kjopssone, "Over et stigende 200-dagssnitt, men tilbake på 50-dagssnittet eller med RSI under 40. Sortert etter dypest tilbakefall mot 50-dagssnittet. Se kolonnen «Fra 200 d»: et instrument kan være i tilbakefall og likevel være svært strukket på lang sikt. Beskrivelse, ikke kjøpsråd.",
@@ -2025,7 +2025,14 @@ function vBredde(){
       ${b.aktiva.slice().sort((x, y) => (y.i_52_omraade ?? -1) - (x.i_52_omraade ?? -1)).map(x => `<tr><td><b>${esc(x.ticker)}</b><br><span class="muted" style="font-size:11px">${esc(x.navn || "")} · ${esc(x.gruppe || "")}</span></td>
         <td>${bSoneChip(x.sone)}</td><td class="tnum">${bTall(x.rsi, 0)}</td><td class="tnum">${bTall(x.dist200_pct, 1, " %")}</td><td class="tnum">${bTall(x.i_52_omraade, 0)}</td><td class="tnum">${bTall(x.r3m, 0, " %")}</td><td class="tnum">${bTall(x.r12m, 0, " %")}</td></tr>`).join("")}</tbody></table></div>
       <p class="muted" style="font-size:12px;margin:0">I 52-ukers område er 0 på årets bunn og 100 på årets topp.</p></div>` : ""}
+`;
+  return `<div class="stack">${breddeFaner()}${S.bSub === "soner" ? soner : oversikt}
     <p class="muted" style="font-size:12px">${esc(b.metode || "")} ${esc(b.merknad || "")}</p></div>`;
+}
+const BFANER = [["oversikt", "Oversikt"], ["indekser", "Indekser og sektorer"], ["historikk", "Siden 1926"], ["soner", "Soner"]];
+function breddeFaner(){
+  const v = BFANER.some(x => x[0] === S.bSub) ? S.bSub : "oversikt";
+  return `<div class="subtabs" role="tablist" aria-label="Bredde">${BFANER.map(([k, l]) => `<button class="btn small ${v === k ? "primary" : "ghost"}" data-bsub="${k}" role="tab" aria-selected="${v === k}">${l}</button>`).join("")}</div>`;
 }
 function breddeKort(){
   const b = NY.bredde; if (!b) return "";
@@ -2036,8 +2043,162 @@ function breddeKort(){
     <span class="mac ${bFarge(n["200"])}">200 d: ${bTall(n["200"], 0)} %</span>
     ${h.persentil_1aar != null ? `<span class="muted tnum" style="font-size:12px">50 d på persentil ${nTall(h.persentil_1aar, 0)} siste år</span>` : ""}
     <span class="muted tnum" style="font-size:12px">${s["kjøpssone"] ?? 0} i kjøpssone, ${s["overkjøpt"] ?? 0} overkjøpt, ${s["utbombet"] ?? 0} utbombet</span>
+    ${(() => { const u = NY.indeksbredde?.universer || [], a = u.find(x => x.id === "sp500"), m = u.find(x => x.id === "sp600"); return a && m ? `<span class="muted tnum" style="font-size:12px">S&P 500 ${bTall(a.naa["50"], 0)} % mot småselskaper ${bTall(m.naa["50"], 0)} % over 50 d</span>` : ""; })()}
     ${(b.varsler || []).map(v => `<span class="mac ${v.farge === "groenn" ? "g" : v.farge === "roed" ? "r" : "y"}">${esc(v.tittel)}</span>`).join("")}</div>`;
 }
+/* --- Periodevalg for grafer. Valget huskes per graf på denne enheten. --- */
+const PERIODER = [["6m", "6 mnd", 183], ["1a", "1 år", 365], ["2a", "2 år", 731]];
+function periodeValg(id, valg = PERIODER, std = "1a"){
+  const v = (S.per || {})[id] || std;
+  return `<div class="row" style="gap:4px" role="group" aria-label="Periode">${valg.map(([k, l]) => `<button class="btn small ${v === k ? "primary" : "ghost"}" data-per="${id}:${k}" aria-pressed="${v === k}">${l}</button>`).join("")}</div>`;
+}
+function periodeFra(id, datoer, valg = PERIODER, std = "1a"){
+  const v = (S.per || {})[id] || std, p = valg.find(x => x[0] === v);
+  if (!p || !p[2] || !datoer.length) return 0;
+  const sist = String(datoer[datoer.length - 1]), fra = new Date(new Date(sist.length === 7 ? sist + "-28" : sist).getTime() - p[2] * 864e5).toISOString().slice(0, sist.length === 7 ? 7 : 10);
+  const i = datoer.findIndex(d => String(d) >= fra); return i < 0 ? 0 : i;
+}
+/* Linjegraf for flere serier med felles datoakse. linjer: [{v, farge, navn}]. o: {min, max, niv, des, h, fra} */
+function linjeGraf(datoer, linjer, o = {}){
+  const fra = o.fra || 0, d = (datoer || []).slice(fra), L = linjer.map(l => ({...l, v: (l.v || []).slice(fra)}));
+  if (d.length < 5) return "";
+  // Smalt sideforhold og høyde som følger bredden: på mobil ble en 640 x 150-graf presset ned til 80 piksler.
+  const w = 420, h = o.h || 170, pad = 30;
+  const alle = L.flatMap(l => l.v).filter(v => v != null).concat(o.niv || []);
+  const lo = o.min ?? Math.min(...alle), hi = o.max ?? Math.max(...alle), sp = (hi - lo) || 1;
+  const x = i => pad + i * (w - pad - 8) / (d.length - 1), y = v => h - 16 - ((v - lo) / sp) * (h - 26);
+  const sti = (arr, farge, bredde) => { let p = "", pen = false;
+    arr.forEach((v, i) => { if (v == null) { pen = false; return; } p += (pen ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); pen = true; });
+    return `<path d="${p}" fill="none" stroke="${farge}" stroke-width="${bredde || 1.8}" stroke-linejoin="round"/>`; };
+  const niv = v => `<line x1="${pad}" y1="${y(v).toFixed(1)}" x2="${w - 8}" y2="${y(v).toFixed(1)}" stroke="var(--line)" stroke-dasharray="3 3"/><text x="2" y="${(y(v) + 4).toFixed(1)}" font-size="10" fill="var(--muted)">${esc(nTall(v, o.des ?? 0))}</text>`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="height:auto;max-height:280px;display:block" role="img" aria-label="${esc(o.tittel || "Graf")}">
+    ${(o.niv || []).map(niv).join("")}${L.map(l => sti(l.v, l.farge, l.bredde)).join("")}
+    <text x="${pad}" y="${h - 2}" font-size="10" fill="var(--muted)">${esc(aksDato(d[0]))}</text>
+    <text x="${w - 8}" y="${h - 2}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(aksDato(d[d.length - 1]))}</text></svg>
+    ${L.length > 1 ? `<div class="row" style="gap:12px;flex-wrap:wrap;font-size:12px">${L.map(l => `<span><span aria-hidden="true" style="display:inline-block;width:14px;height:3px;background:${l.farge};vertical-align:middle;margin-right:4px"></span>${esc(l.navn)}</span>`).join("")}</div>` : ""}`;
+}
+/* Akseetikett med år: grafene spenner over år og tiår, så dag og måned alene er ikke nok. */
+const aksDato = s => { s = String(s || ""); return s.length === 7 ? s.slice(5, 7) + "." + s.slice(0, 4) : s.length >= 10 ? s.slice(8, 10) + "." + s.slice(5, 7) + "." + s.slice(2, 4) : "–"; };
+const FARGER = ["var(--accent)", "#2f6fdb", "#1f8a4c", "var(--muted)"];
+
+/* --- Store mot små: bredde per indeks, likevekt mot markedsvekt og tidagerstabellen --- */
+function indeksPanel(){
+  const ib = NY.indeksbredde, b = NY.bredde; if (!ib) return "";
+  const u = ib.universer || [];
+  const rader = u.map(x => ({navn: x.navn, naa: x.naa, e5: x.endring_5d, s10: x.siste10, n: x.med_data}));
+  if (b) rader.push({navn: "Vårt brede univers", naa: b.naa, e5: null, s10: b.siste10, n: b.med_data, egen: true});
+  const celle = v => `<td class="tnum"><span class="mac ${bFarge(v)}">${bTall(v, 0)}</span></td>`;
+  const lv = ib.likevekt;
+  const gap = ib.store_mot_smaa_50d;
+  const fra = periodeFra("ib", ib.datoer || [], PERIODER, "1a");
+  const tiDager = rader.filter(r => r.s10?.pct50?.length).length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Andel over 50 d</th>${(rader.find(r => r.s10?.datoer?.length)?.s10.datoer || []).map(d => `<th class="tnum">${esc(String(d).slice(8, 10) + "." + String(d).slice(5, 7))}</th>`).join("")}<th>Endring</th></tr></thead><tbody>
+      ${rader.filter(r => r.s10?.pct50?.length).map(r => { const a = r.s10.pct50, e = a[a.length - 1] != null && a[0] != null ? a[a.length - 1] - a[0] : null;
+        return `<tr><td><b>${esc(r.navn)}</b></td>${a.map(v => `<td class="tnum"><span class="mac ${v == null ? "n" : v >= 50 ? "g" : "r"}">${bTall(v, 0)}</span></td>`).join("")}<td class="tnum">${e == null ? "–" : dTall(e, " pp", 0)}</td></tr>`; }).join("")}
+    </tbody></table></div>` : "";
+  return `<div class="panel stack"><div class="spread"><h2>Store mot små</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(ib.kursdato))}</span></div>
+    ${gap != null ? `<p style="margin:0"><b>${gap >= 15 ? "De store selskapene bærer markedet." : gap <= -15 ? "Småselskapene er bredere enn de store." : "Store og små deltar omtrent likt."}</b> S&P 500 har ${esc(nTall(Math.abs(gap), 0))} prosentpoeng ${gap >= 0 ? "flere" : "færre"} aksjer over 50-dagssnittet enn S&P 600.</p>` : ""}
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Univers</th><th>10 d</th><th>50 d</th><th>100 d</th><th>200 d</th><th>50 d, 5 dager</th></tr></thead><tbody>
+      ${rader.map(r => `<tr><td><b>${esc(r.navn)}</b><br><span class="muted" style="font-size:11px">${r.n ?? "–"} ${r.egen ? "instrumenter" : "aksjer med data"}</span></td>${["10", "50", "100", "200"].map(k => celle(r.naa?.[k])).join("")}<td class="tnum">${r.e5?.["50"] != null ? dTall(r.e5["50"], " pp", 0) : "–"}</td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="spread"><b style="font-size:14px">Andel over 50-dagssnittet</b>${periodeValg("ib")}</div>
+    ${linjeGraf(ib.datoer, u.map((x, i) => ({v: x.serie?.pct50, farge: FARGER[i], navn: x.navn})), {min: 0, max: 100, niv: [20, 50, 80], fra, tittel: "Andel over 50-dagssnittet per indeks"})}
+    ${lv ? `<div class="tiles">
+      <div class="tile static"><span class="big tnum ${tone(lv.endring_60d_pct)}">${dTall(lv.endring_60d_pct, " %", 1)}</span><span class="lab">likevektet mot markedsvektet S&P 500, 60 dager<br><small>20 dager ${dTall(lv.endring_20d_pct, " %", 1)} · persentil ${bTall(lv.persentil_2aar, 0)} av 2 år</small></span></div>
+      <div class="tile static"><span class="big tnum">${dTall(lv.rsp_3m, " %", 0)} <small>mot</small> ${dTall(lv.spy_3m, " %", 0)}</span><span class="lab">RSP mot SPY, 3 måneder</span></div></div>
+      ${linjeGraf(lv.datoer, [{v: lv.serie, farge: "var(--accent)", navn: "RSP/SPY"}], {fra: periodeFra("ib", lv.datoer || [], PERIODER, "1a"), des: 3, tittel: "RSP delt på SPY"})}
+      <p class="muted" style="font-size:12px;margin:0">${esc(lv.regel || "")}</p>` : ""}
+    ${tiDager ? `<div class="eyebrow" style="margin-top:4px">Siste 10 handelsdager</div>${tiDager}` : ""}
+    <p class="muted" style="font-size:12px;margin:0">Grønn er over 50 prosent, rød under. Indeksene bruker dagens medlemmer bakover i tid, så eldre tall ser litt sunnere ut enn de var.</p></div>`;
+}
+function internPanel(){
+  const ib = NY.indeksbredde, it = ib?.intern; if (!it) return "";
+  const mc = it.mcclellan || {}, tb = it.topper_bunner || {}, z = it.zweig || {};
+  const fra = periodeFra("intern", it.datoer || [], PERIODER, "1a");
+  const zTekst = z.signaler?.length ? "Siste breddestøt: " + aksDato(z.signaler[z.signaler.length - 1]).slice(0, 6) + z.signaler[z.signaler.length - 1].slice(0, 4) + "." : "Ingen breddestøt de siste to årene.";
+  return `<div class="panel stack"><div class="spread"><h2>Intern styrke</h2>${periodeValg("intern")}</div>
+    <div class="tiles">
+      <div class="tile static"><span class="big tnum ${tone(mc.verdi)}">${bTall(mc.verdi, 0)}</span><span class="lab">McClellan-oscillator<br><small>persentil ${bTall(mc.persentil_2aar, 0)} av 2 år</small></span></div>
+      <div class="tile static"><span class="big tnum">${tb.topper ?? "–"} <small>/</small> ${tb.bunner ?? "–"}</span><span class="lab">nye 52-ukers topper / bunner i dag<br><small>10 dager: ${tb.topper_10d ?? "–"} / ${tb.bunner_10d ?? "–"}</small></span></div>
+      <div class="tile static"><span class="big tnum">${z.ema10 != null ? nTall(z.ema10, 2) : "–"}</span><span class="lab">Zweig, andel stigende (10 d EMA)<br><small>${z.under_lav_siste_10d ? "var under " + nTall(z.lav, 2) + " siste 10 dager: et støt er mulig" : "støt krever under " + nTall(z.lav, 2) + " og så over " + nTall(z.hoy, 3)}</small></span></div></div>
+    <b style="font-size:14px">McClellan</b>
+    ${linjeGraf(it.datoer, [{v: mc.serie, farge: "var(--accent)", navn: "McClellan"}], {niv: [-60, 0, 60], fra, tittel: "McClellan-oscillator"})}
+    <b style="font-size:14px">Nye topper og bunner</b>
+    ${linjeGraf(it.datoer, [{v: tb.serie_topper, farge: "#1f8a4c", navn: "Nye 52-ukers topper"}, {v: tb.serie_bunner, farge: "var(--accent)", navn: "Nye 52-ukers bunner"}], {min: 0, fra, tittel: "Nye topper og bunner"})}
+    <b style="font-size:14px">Zweig</b>
+    ${linjeGraf(it.datoer, [{v: z.serie, farge: "#2f6fdb", navn: "Andel stigende, 10 d EMA"}], {niv: [z.lav, 0.5, z.hoy], des: 2, fra, tittel: "Zweigs breddestøt"})}
+    <p class="muted" style="font-size:12px;margin:0">${esc(zTekst)} ${esc(mc.regel || "")}. Regnet på ${esc(it.univers || "")}, ikke NYSE, så nivåene er ikke direkte sammenlignbare med publiserte tall.</p></div>`;
+}
+function sektorPanel(){
+  const s = NY.indeksbredde?.sektorer || []; if (!s.length) return "";
+  return `<div class="panel stack"><h2>Sektorer</h2>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Sektor</th><th>Over 50 d</th><th>Over 200 d</th><th>50 d, 20 dager</th></tr></thead><tbody>
+    ${s.map(x => `<tr><td><b>${esc(x.sektor)}</b><br><span class="muted" style="font-size:11px">${x.n} aksjer</span></td><td class="tnum"><span class="mac ${bFarge(x.pct50)}">${bTall(x.pct50, 0)} %</span></td>
+      <td class="tnum"><span class="mac ${bFarge(x.pct200)}">${bTall(x.pct200, 0)} %</span></td><td class="tnum">${x.endring_20d_pct50 != null ? dTall(x.endring_20d_pct50, " pp", 0) : "–"}</td></tr>`).join("")}</tbody></table></div>
+    <p class="muted" style="font-size:12px;margin:0">GICS-sektorer, S&P 1500 (500, 400 og 600 samlet). Sortert etter andel over 50-dagssnittet.</p></div>`;
+}
+
+/* --- Historikk siden 1926: Ken Frenchs 49 bransjer, og hva markedet gjorde etter faste signaler --- */
+function historikkPanel(){
+  const h = NY.bransje;
+  if (!h) return `<div class="panel stack"><h2>Bransjebredde siden 1926</h2><p class="muted" style="margin:0">Hentes fra Ken Frenchs datasett i morgenkjøringen og kommer med neste kjøring.</p></div>`;
+  const n = h.naa || {}, sv = n.smal_topp_vilkaar || {};
+  const PH = [["2a", "2 år", 731], ["10a", "10 år", 3653], ["alt", "Siden 1926", 0]];
+  const valg = (S.per || {}).hist || "10a";
+  const graf = valg === "2a"
+    ? linjeGraf(h.siste2aar?.datoer, [{v: h.siste2aar?.pct50, farge: "var(--accent)", navn: "Over 50 d"}, {v: h.siste2aar?.pct200, farge: "var(--muted)", navn: "Over 200 d"}], {min: 0, max: 100, niv: [20, 50, 80], tittel: "Bransjer over snittet, to år"})
+    : linjeGraf(h.maanedlig?.mnd, [{v: h.maanedlig?.pct50, farge: "var(--accent)", navn: "Over 50 d", bredde: 1.2}, {v: h.maanedlig?.pct200, farge: "var(--muted)", navn: "Over 200 d", bredde: 1.2}], {min: 0, max: 100, niv: [20, 50, 80], fra: periodeFra("hist", h.maanedlig?.mnd || [], PH, "10a"), tittel: "Bransjer over snittet, månedlig"});
+  const fmt = x => x ? `<span class="tnum ${tone(x.median)}">${dTall(x.median, " %", 1)}</span><br><span class="muted" style="font-size:11px">${nTall(x.andel_positive, 0)} % opp · n ${x.n}</span>` : "–";
+  const ad = h.alle_dager || {};
+  const krav = [["pct50_under_27", "under 27 % over 50 d"], ["pct100_under_50", "under 50 % over 100 d"], ["pct200_under_50", "under 50 % over 200 d"], ["marked_innen_3_pct", "markedet innen 3 % av toppen"]];
+  return `<div class="panel stack"><div class="spread"><h2>Bransjebredde siden 1926</h2><span class="muted tnum" style="font-size:12px">kilde til ${esc(kortDato(h.kildedato))}</span></div>
+    <div class="tiles">
+      <div class="tile static"><span class="big tnum" style="${{g: "color:var(--ok)", y: "color:var(--warn)", r: "color:var(--accent)", n: ""}[bFarge(n.pct50)]}">${bTall(n.pct50, 0)}<small> %</small></span><span class="lab">bransjer over 50 d</span></div>
+      <div class="tile static"><span class="big tnum">${bTall(n.pct100, 0)}<small> %</small></span><span class="lab">over 100 d</span></div>
+      <div class="tile static"><span class="big tnum">${bTall(n.pct200, 0)}<small> %</small></span><span class="lab">over 200 d</span></div>
+      <div class="tile static"><span class="big tnum">${bTall(n.forhold_50_200, 2)}</span><span class="lab">forhold 50/200<br><small>markedet ${dTall(n.marked_fra_topp, " %", 1)} fra topp</small></span></div></div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><span class="muted" style="font-size:12px">Smal topp krever alle fire:</span>${krav.map(([k, l]) => `<span class="mac ${sv[k] ? "y" : "n"}">${sv[k] ? "✓" : "✗"} ${esc(l)}</span>`).join("")}</div>
+    <div class="spread"><b style="font-size:14px">Andel av 49 bransjer over snittet</b>${periodeValg("hist", PH, "10a")}</div>
+    ${graf}
+    <h2 style="margin-top:8px">Hva markedet gjorde etterpå</h2>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Signal</th><th>1 mnd</th><th>3 mnd</th><th>6 mnd</th><th>12 mnd</th></tr></thead><tbody>
+      ${(h.signaler || []).map(s => `<tr><td><b>${esc(s.navn)}</b> <span class="muted">· ${s.antall} ganger</span><br><span class="muted" style="font-size:11px">${esc(s.regel)}</span></td>${["1m", "3m", "6m", "12m"].map(k => `<td>${fmt(s.etter?.[k])}</td>`).join("")}</tr>`).join("")}
+      <tr><td><b>Alle dager</b><br><span class="muted" style="font-size:11px">grunnlinjen å sammenligne med</span></td>${["1m", "3m", "6m", "12m"].map(k => `<td>${fmt(ad[k])}</td>`).join("")}</tr>
+    </tbody></table></div>
+    ${(h.signaler || []).filter(s => s.episoder?.length).map(s => `<details><summary style="cursor:pointer"><b>${esc(s.navn)}</b>: alle ${s.antall} episoder${s.antall > s.episoder.length ? " (de siste " + s.episoder.length + " vises)" : ""}</summary>
+      <div class="tblwrap"><table class="tbl"><thead><tr><th>Dato</th><th>50/100/200 d</th><th>Fra topp</th><th>1 mnd</th><th>3 mnd</th><th>6 mnd</th><th>12 mnd</th></tr></thead><tbody>
+      ${s.episoder.slice().reverse().map(e => `<tr><td class="tnum">${esc(e.dato)}</td><td class="tnum">${bTall(e.pct50, 0)} / ${bTall(e.pct100, 0)} / ${bTall(e.pct200, 0)}</td><td class="tnum">${dTall(e.fra_topp, " %", 1)}</td>${["1m", "3m", "6m", "12m"].map(k => `<td class="tnum ${tone(e[k])}">${e[k] != null ? dTall(e[k], " %", 1) : "–"}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div></details>`).join("")}
+    <p class="muted" style="font-size:12px;margin:0">Median avkastning for markedet (CRSP, alle amerikanske aksjer) og andel ganger det var opp. Få episoder betyr stor usikkerhet, og historikk er ikke en prognose. ${esc(h.metode || "")} Kilden oppdateres omtrent månedlig.</p></div>`;
+}
+
+/* --- Breddesone og sektor for det jeg eier og følger --- */
+function egenSone(sym){
+  const k = String(sym || "").trim(), e = NY.bredde?.egne || {};
+  return e[k] || e[k.replace(/ /g, "-").toUpperCase()] || null;
+}
+function egenSektor(sym){
+  const ib = NY.indeksbredde; if (!ib) return null;
+  const x = (ib.egne || {})[sym]; if (!x?.sektor) return null;
+  return {navn: x.sektor, ...((ib.sektorer || []).find(s => s.sektor === x.sektor) || {})};
+}
+function soneLinje(sym){
+  const z = egenSone(sym), s = egenSektor(sym);
+  if (!z && !s) return "";
+  return `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center;font-size:13px">${z ? `${bSoneChip(z.sone)}<span class="muted tnum">RSI ${bTall(z.rsi, 0)} · ${dTall(z.dist50_pct, " %", 1)} fra 50 d · ${dTall(z.dist200_pct, " %", 1)} fra 200 d</span>` : ""}
+    ${s ? `<span class="mac ${bFarge(s.pct50)}">${esc(s.navn)}: ${bTall(s.pct50, 0)} % over 50 d${s.endring_20d_pct50 != null ? ", " + dTall(s.endring_20d_pct50, " pp", 0) + " på 20 d" : ""}</span>` : ""}</div>`;
+}
+function egneSonerPanel(){
+  const b = NY.bredde; if (!b?.egne) return "";
+  const firma = (S.config?.companies || []).filter(c => c.ticker && egenSone(c.ticker));
+  if (!firma.length) return "";
+  return `<div class="panel stack"><div class="spread"><h2>Selskapene du følger</h2><span class="muted tnum" style="font-size:12px">${esc(kortDato(b.kursdato || b.date))}</span></div>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Selskap</th><th>Sone</th><th>RSI</th><th>Fra 50 d</th><th>Fra 200 d</th><th>Fra 52 u topp</th><th>Sektor</th></tr></thead><tbody>
+    ${firma.map(c => { const z = egenSone(c.ticker), s = egenSektor(c.ticker); return `<tr><td><b>${esc(c.ticker)}</b><br><span class="muted" style="font-size:11px">${esc(c.name || "")}</span></td><td>${bSoneChip(z.sone)}</td>
+      <td class="tnum">${bTall(z.rsi, 0)}</td><td class="tnum">${bTall(z.dist50_pct, 1, " %")}</td><td class="tnum">${bTall(z.dist200_pct, 1, " %")}</td><td class="tnum">${bTall(z.fra_topp52_pct, 1, " %")}</td>
+      <td>${s ? `<span class="mac ${bFarge(s.pct50)}">${esc(s.navn)} ${bTall(s.pct50, 0)} %</span>` : `<span class="muted">–</span>`}</td></tr>`; }).join("")}</tbody></table></div>
+    <p class="muted" style="font-size:12px;margin:0">Samme soneregler som i Bredde og soner. Sektor vises bare for aksjer i S&P 500, 400 eller 600, med andelen i sektoren over 50-dagssnittet.</p></div>`;
+}
+
 /*NYTT-END*/
 function vTools(){
   const sub = ["kokk","gitar","beslutning"].includes(S.vkSub) ? S.vkSub : "kokk";
@@ -3193,6 +3354,7 @@ function vTrading(){
     ${pos.length ? pos.map(p => `<div class="posrow">
       <div class="pos-h"><b class="sym">${esc(p.symbol)}</b><span class="muted tnum">${esc(p.qty)} aksjer · inn ${usd(p.avg)}${p.opened ? " · " + esc(p.opened) : ""}</span><span class="tnum ${tone(p.pnl)}" style="margin-left:auto;font-weight:700">${usd(p.pnl)} <small>(${sgn(p.pct, " %")})</small></span></div>
       <div class="pos-bar">${posBar(p)}</div>
+      ${soneLinje(p.symbol)}
       ${p.partial ? `<div class="muted" style="font-size:13px">Delgevinst tatt: ${esc(p.partial.solgt)} solgt til ${usd(p.partial.pris)} ${esc(p.partial.dato || "")}. Stopp flyttet til ${usd(p.stop)}.</div>` : ""}
     </div>`).join("") : `<p class="muted">Ingen åpne posisjoner.</p>`}
     ${orders.length ? `<div class="eyebrow" style="margin-top:6px">Liggende ordre</div><div class="quiet">${orders.map(o => `<span>${esc(o.symbol)} · ${esc(o.type === "STP" ? "Stopp" : o.type)} ${usd(o.price)}${o.qty ? " × " + esc(o.qty) : ""}</span>`).join("")}</div>` : ""}
@@ -4172,6 +4334,8 @@ document.addEventListener("click", async e => {
   const fv = t.closest("[data-forsok]"); if (fv) { S.fValgt = fv.dataset.forsok; S.fNy = false; render(); return true; }
   if (t.id === "f-nytt") { S.fNy = true; render(); return true; }
   if (t.id === "f-avbryt") { S.fNy = false; render(); return true; }
+  const bfa = t.closest("[data-bsub]"); if (bfa) { S.bSub = bfa.dataset.bsub; store.set("mp.bsub", S.bSub); render(); return true; }
+  const pv = t.closest("[data-per]"); if (pv) { const [id, k] = pv.dataset.per.split(":"); S.per = {...(S.per || {}), [id]: k}; store.set("mp.per", JSON.stringify(S.per)); render(); return true; }
   const ms = t.closest("[data-msub]"); if (ms) { S.mSub = ms.dataset.msub; store.set("mp.msub", S.mSub); render(); return true; }
   const vk = t.closest("[data-vksub]"); if (vk) { S.vkSub = vk.dataset.vksub; store.set("mp.vksub", S.vkSub); render(); return true; }
   const rs = t.closest("[data-rapsub]"); if (rs) { S.rapSub = rs.dataset.rapsub; store.set("mp.rapsub", S.rapSub); render(); return true; }
@@ -4383,12 +4547,13 @@ function loadLearnDoc(path, key, def){
     .catch(() => { if (key === "G") S.G = def(); else S.L[key] = def(); S.Lloaded[key] = true; render(); });
 }
 async function boot(){
-  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "pos"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; S.akTab = store.get("mp.aktab") || "minervini"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
+  // Settes før første tegning: ellers viser visningene «ikke tilgjengelig» mens appen kobler til.
+  S.kobler = !!window.claude?.use;
+  const h = (location.hash || "").slice(1); S.gSub = store.get("mp.gsub") || "fb"; S.finSub = store.get("mp.fsub") || "pos"; S.hSub = store.get("mp.hsub") || "studier"; S.ukeSub = store.get("mp.ukesub") || "debrief"; S.mSub = store.get("mp.msub") || "status"; S.bSub = store.get("mp.bsub") || "oversikt"; try { S.per = JSON.parse(store.get("mp.per") || "{}") || {}; } catch { S.per = {}; } S.vkSub = store.get("mp.vksub") || "trading"; S.rapSub = store.get("mp.rapsub") || "uke"; S.scTab = store.get("mp.sctab") || "vekst"; S.akTab = store.get("mp.aktab") || "minervini"; for (const [k, n] of [["shopSel", "mp.shopsel"], ["shopPort", "mp.shopport"], ["shopDone", "mp.shopdone"]]) { try { S[k] = JSON.parse(store.get(n) || "null") || (k === "shopPort" ? {} : []); } catch { S[k] = k === "shopPort" ? {} : []; } } { let ms = null; try { ms = JSON.parse(store.get("mp.masort") || "null"); } catch {} S.maSort = ms && MA_SORTS[ms.k] && (ms.dir === 1 || ms.dir === -1) ? ms : {k: "q", dir: -1}; }
   go(VIEWS.includes(h) ? h : (store.get("mp.view") || "idag"));
   loadGeo(); loadHist();
-  const offline = () => { ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
+  const offline = () => { S.kobler = false; ["geo","hist","own","vg3"].forEach(k => { S.L[k] = {s:{}, settings: defaultSettings(k), stats:{}}; S.Lloaded[k] = true; }); render(); };
   if (!window.claude?.use) { offline(); return; }
-  S.kobler = true;
   const db = await claude.use("db"); S.db = db; S.kobler = false;
   if (!db) { offline(); return; }
   db.collection("feed").orderBy("date", "desc").limit(60).onSnapshot(snap => {
